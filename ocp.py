@@ -408,6 +408,36 @@ class casadiSolver():
 
         return df, stats
 
+    def computeDPSolution(self, NU=10, NX=10):
+        """ Computes reference solution using Dynamic Programming.
+
+        Parameters
+        ----------
+
+        NU  :   int
+                number of points in the input space (per dimension)
+        NX  :   int
+                number of points in the state space (per dimension)
+        """
+
+        # hard-coded state and input dimension (code should work for arbitrary nx and nu
+        # though)
+
+        nx = 2
+        nu = 2
+
+        X1_MIN = 0.0
+        X1_MAX = 1.0
+
+        # create integrator (use options fed to MS solver)
+        opts = self.opts
+
+        numIntervals = opts.numIntervals
+        velocityMin = opts.minimumVelocity
+
+        trainModel = train.exportModel()
+        trainIntegrator = TrainIntegrator(trainModel, opts.integrationMethod, opts.integrationOptions.toDict())
+
 
 if __name__ == '__main__':
 
