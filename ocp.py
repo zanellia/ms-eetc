@@ -423,12 +423,75 @@ class casadiSolver():
         # hard-coded state and input dimension (code should work for arbitrary nx and nu
         # though)
 
+        def project_homogeneous_grid(value:np.ndarray, grid:list):
+            '''project a value to the index of its "closest" 
+            value in a homogeneous grid
+
+            Parameters
+            ----------
+            value : np.ndarray
+                    column vector to be projected
+
+            grid  : list
+                    list of np.ndarrays with grid values
+
+            Returns
+            -------
+
+            list
+                indexes of "closest" element in the grid,
+                None if the vector is outside of the
+                extrema of the grid
+            '''
+
+            M = value.shape[0]
+            indexes = [None] * M
+            for i in range(M):
+                N = grid[i].size
+                min_val = np.amin(grid[i])
+                max_val = np.amax(grid[i])
+                # we assume the grid is a monotonous
+                # increasing 1D array
+                indexes[i] = np.around(((value-min_val)/\
+                    (max_val-min_val))*(N-1)).astype(int)
+                if indexes[i] < 0 or indexes[i] > N:
+                    indexes[i] = None
+                # else
+            return indexes
+        
         nx = 2
         nu = 2
-
+        
         X1_MIN = 0.0
         X1_MAX = 1.0
 
+        X2_MIN = 0.0
+        X2_MAX = 1.0
+
+        U1_MIN = 0.0
+        U1_MAX = 1.0
+
+        U2_MIN = 0.0
+        U2_MAX = 1.0
+
+        x_bounds = ((X1_MIN, X1_MAX), (X2_MIN, X2_MAX))
+        u_bounds = ((U1_MIN, U1_MAX), (U2_MIN, U2_MAX))
+
+        # grid state and input space
+        X = np.zeros(tuple([NX] * nx))
+        U = np.zeros(tuple([NU] * nu))
+
+        x_values = []
+        for i in range(nx):
+            x_values.append(np.linspace(x_bounds[i][0], x_bounds[i][1], NX))
+
+        u_values = []
+        for i in range(nu):
+            u_values.append(np.linspace(u_bounds[i][0], u_bounds[i][1], NU))
+
+        X = np.array(np.meshgrid(*x_values)).T.reshape(-1,nx)
+        U = np.array(np.meshgrid(*u_values)).T.reshape(-1,nu)
+        import pdb; pdb.set_trace()
         # create integrator (use options fed to MS solver)
         opts = self.opts
 
