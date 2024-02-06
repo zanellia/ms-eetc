@@ -458,6 +458,63 @@ class casadiSolver():
                     indexes[i] = None
                 # else
             return indexes
+
+        def DPOperator(J, l, x_values, u_values,\
+                integrator, constraints):
+            '''
+            Compute updated value function using DP operator, i.e, for all x, J_k(x) = min_u l(x,u) + J_{k+1}(f(x,u))
+
+            Parameters
+            ----------
+
+            J : np.ndarray (NDX X nx)
+                value function in tabular form
+
+            l : function
+                stage cost function x,u -> l(x,u)
+                
+
+            x_values : list of np.ndarrays
+                discretized state space
+            
+            u_values : list of np.ndarrays
+                discretized input space
+
+            integrator : function
+                integrator function x,u -> x_+
+
+            constraints : function
+                constraints function x,u -> g(x,u)
+            '''
+
+            X = np.array(np.meshgrid(*x_values)).T.reshape(-1,nx)
+            U = np.array(np.meshgrid(*u_values)).T.reshape(-1,nu)
+
+            # number of discretized states
+            NDX = X.shape[0]
+
+            # number of discretized inputs
+            NDU = U.shape[0]
+
+            # loop over states
+            for j in range(NDX):
+                x_ = X[j,:].T
+
+                # gradient and curvature of current index
+                grad = self.points.iloc[i]['Gradient [permil]']/1e3
+                curv = self.points.iloc[i]['Curvature [1/m]']
+
+                # loop over inputs
+                for k in range(NDU):
+                    u_ = U[k,:].T
+
+                    # integrate dynamics
+                    out = integrator.solve(time=time[i], velocitySquared=velSq[i], ds=self.steps[i],
+                        traction=Fel[i], pnBrake=Fpb[i], gradient=grad, curvature=curv)
+
+                    xNxt1 = ca.vertcat(time[i+1], velSq[i+1])
+                    xNxt2 = ca.vertcat(out['time'], out['velSquared'])
+            return J_new
         
         nx = 2
         nu = 2
@@ -491,7 +548,6 @@ class casadiSolver():
 
         X = np.array(np.meshgrid(*x_values)).T.reshape(-1,nx)
         U = np.array(np.meshgrid(*u_values)).T.reshape(-1,nu)
-        import pdb; pdb.set_trace()
         # create integrator (use options fed to MS solver)
         opts = self.opts
 
@@ -500,6 +556,17 @@ class casadiSolver():
 
         trainModel = train.exportModel()
         trainIntegrator = TrainIntegrator(trainModel, opts.integrationMethod, opts.integrationOptions.toDict())
+
+        # DP recursion
+        numIntervals = opts.numIntervals
+        
+        # optimal value function
+        J_opt = np.full_like(X)
+        J_opt_new = np.full_like(X)
+
+        # loop over time
+        for i in range(numIntervals):
+            
 
 
 if __name__ == '__main__':
