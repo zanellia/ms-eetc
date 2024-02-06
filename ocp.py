@@ -524,12 +524,19 @@ class casadiSolver():
                     u_ = U[k,:].T
 
                     # integrate dynamics
-                    x_+ = integrator(x_,u_)
+                    x_next = integrator(x_,u_)
 
                     # project onto state grid
-                    idx, x_+_p = x_values[project_onto_homogeneous_grid(x_+, x_values)]
+                    idx_next, x_next_p = x_values[project_onto_homogeneous_grid(x_next, x_values)]
 
-                    # evaluate value function
+                    # obtain index in reshaped form
+                    idx_next_rs = np.unravel_index(np.ravel_multi_index((idx, [NX]*nx), (NDX,nx)))
+
+                    # evaluate argument of minimization
+                    J_ = l(x_, u_) + J[idx_next_rs]
+
+                    if J_ < J_new[j]:
+                        J_new[j] = J_
 
             return J_new
         
@@ -588,7 +595,7 @@ class casadiSolver():
         numIntervals = opts.numIntervals
         
         # optimal value function
-        J_opt = np.full_like(X)
+        J_opt = np.full_like(X, 0.0)
 
         # loop over time
         for i in range(numIntervals):
