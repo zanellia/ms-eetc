@@ -423,7 +423,7 @@ class casadiSolver():
         # hard-coded state and input dimension (code should work for arbitrary nx and nu
         # though)
 
-        def project_homogeneous_grid(value:np.ndarray, grid:list):
+        def project_onto_homogeneous_grid(value:np.ndarray, grid:list):
             '''project a value to the index of its "closest" 
             value in a homogeneous grid
 
@@ -442,6 +442,9 @@ class casadiSolver():
                 indexes of "closest" element in the grid,
                 None if the vector is outside of the
                 extrema of the grid
+
+            np.ndarray 
+                projected vector
             '''
 
             M = value.shape[0]
@@ -454,10 +457,15 @@ class casadiSolver():
                 # increasing 1D array
                 indexes[i] = np.around(((value-min_val)/\
                     (max_val-min_val))*(N-1)).astype(int)
+                # if not in the interval, then reset to None
                 if indexes[i] < 0 or indexes[i] > N:
                     indexes[i] = None
-                # else
-            return indexes
+
+            value_p = np.full_like(value)
+            for i in range(M):
+                value_p[i] = grid[i][indexes[i]]
+
+            return indexes, value_p
 
         def DPOperator(J, l, x_values, u_values,\
                 integrator, constraints):
@@ -474,10 +482,10 @@ class casadiSolver():
                 stage cost function x,u -> l(x,u)
                 
 
-            x_values : list of np.ndarrays
+            x_values : list of nx np.ndarrays (1 X NX)
                 discretized state space
             
-            u_values : list of np.ndarrays
+            u_values : list of nu np.ndarrays (1 X NU)
                 discretized input space
 
             integrator : function
@@ -485,7 +493,16 @@ class casadiSolver():
 
             constraints : function
                 constraints function x,u -> g(x,u)
+
+            Returns
+            -------
+
+            np.ndarray
+                updated value function according to DP operator
             '''
+
+            nx = len(x_values)
+            nu = len(u_values)
 
             X = np.array(np.meshgrid(*x_values)).T.reshape(-1,nx)
             U = np.array(np.meshgrid(*u_values)).T.reshape(-1,nu)
@@ -496,24 +513,24 @@ class casadiSolver():
             # number of discretized inputs
             NDU = U.shape[0]
 
+            J_new = np.full_like(J, np.inf)
+
             # loop over states
             for j in range(NDX):
                 x_ = X[j,:].T
-
-                # gradient and curvature of current index
-                grad = self.points.iloc[i]['Gradient [permil]']/1e3
-                curv = self.points.iloc[i]['Curvature [1/m]']
 
                 # loop over inputs
                 for k in range(NDU):
                     u_ = U[k,:].T
 
                     # integrate dynamics
-                    out = integrator.solve(time=time[i], velocitySquared=velSq[i], ds=self.steps[i],
-                        traction=Fel[i], pnBrake=Fpb[i], gradient=grad, curvature=curv)
+                    x_+ = integrator(x_,u_)
 
-                    xNxt1 = ca.vertcat(time[i+1], velSq[i+1])
-                    xNxt2 = ca.vertcat(out['time'], out['velSquared'])
+                    # project onto state grid
+                    idx, x_+_p = x_values[project_onto_homogeneous_grid(x_+, x_values)]
+
+                    # evaluate value function
+
             return J_new
         
         nx = 2
@@ -557,12 +574,21 @@ class casadiSolver():
         trainModel = train.exportModel()
         trainIntegrator = TrainIntegrator(trainModel, opts.integrationMethod, opts.integrationOptions.toDict())
 
+        # gradient and curvature of current index
+        grad = self.points.iloc[i]['Gradient [permil]']/1e3
+        curv = self.points.iloc[i]['Curvature [1/m]']
+
+        out = integrator.solve(time=time[i], velocitySquared=velSq[i], ds=self.steps[i],
+            traction=Fel[i], pnBrake=Fpb[i], gradient=grad, curvature=curv)
+
+        xNxt1 = ca.vertcat(time[i+1], velSq[i+1])
+        xNxt2 = ca.vertcat(out['time'], out['velSquared'])
+
         # DP recursion
         numIntervals = opts.numIntervals
         
         # optimal value function
         J_opt = np.full_like(X)
-        J_opt_new = np.full_like(X)
 
         # loop over time
         for i in range(numIntervals):
