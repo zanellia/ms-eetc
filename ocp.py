@@ -448,7 +448,7 @@ class casadiSolver():
             '''
 
             M = value.shape[0]
-            indexes = [None] * M
+            indexes = [np.nan] * M
             for i in range(M):
                 N = grid[i].size
                 min_val = np.amin(grid[i])
@@ -457,11 +457,12 @@ class casadiSolver():
                 # increasing 1D array
                 indexes[i] = np.around(((value[i]-min_val)/\
                     (max_val-min_val))*(N-1)).astype(int)
-                # if not in the interval, then reset to None
-                if indexes[i] < 0 or indexes[i] > N:
-                    indexes[i] = None
+                # if not in the interval, return None
+                if indexes[i] < 0 or indexes[i] > N-1:
+                    return None, None
 
             value_p = np.full_like(value, 0.0)
+
             for i in range(M):
                 value_p[i] = grid[i][indexes[i]]
 
@@ -528,6 +529,9 @@ class casadiSolver():
 
                     # project onto state grid
                     idx_next, x_next_p = project_onto_homogeneous_grid(x_next, x_values)
+
+                    if idx_next is None:
+                        continue
 
                     # obtain index in reshaped form
                     idx_next_rs = np.unravel_index(np.ravel_multi_index(idx_next, [NX]*nx), (NDX))
