@@ -455,27 +455,27 @@ class casadiSolver():
                 max_val = np.amax(grid[i])
                 # we assume the grid is a monotonous
                 # increasing 1D array
-                indexes[i] = np.around(((value-min_val)/\
+                indexes[i] = np.around(((value[i]-min_val)/\
                     (max_val-min_val))*(N-1)).astype(int)
                 # if not in the interval, then reset to None
                 if indexes[i] < 0 or indexes[i] > N:
                     indexes[i] = None
 
-            value_p = np.full_like(value)
+            value_p = np.full_like(value, 0.0)
             for i in range(M):
                 value_p[i] = grid[i][indexes[i]]
 
             return indexes, value_p
 
         def DPOperator(J, l, x_values, u_values,\
-                integrator, constraints):
+                integrator, constraints=None):
             '''
             Compute updated value function using DP operator, i.e, for all x, J_k(x) = min_u l(x,u) + J_{k+1}(f(x,u))
 
             Parameters
             ----------
 
-            J : np.ndarray (NDX X nx)
+            J : np.ndarray (NDX)
                 value function in tabular form
 
             l : function
@@ -513,7 +513,7 @@ class casadiSolver():
             # number of discretized inputs
             NDU = U.shape[0]
 
-            J_new = np.full_like(J, np.inf)
+            J_new = np.inf*np.ones((NDX, 1))
 
             # loop over states
             for j in range(NDX):
@@ -527,10 +527,10 @@ class casadiSolver():
                     x_next = integrator(x_,u_)
 
                     # project onto state grid
-                    idx_next, x_next_p = x_values[project_onto_homogeneous_grid(x_next, x_values)]
+                    idx_next, x_next_p = project_onto_homogeneous_grid(x_next, x_values)
 
                     # obtain index in reshaped form
-                    idx_next_rs = np.unravel_index(np.ravel_multi_index((idx, [NX]*nx), (NDX,nx)))
+                    idx_next_rs = np.unravel_index(np.ravel_multi_index(idx_next, [NX]*nx), (NDX))
 
                     # evaluate argument of minimization
                     J_ = l(x_, u_) + J[idx_next_rs]
@@ -571,34 +571,44 @@ class casadiSolver():
             u_values.append(np.linspace(u_bounds[i][0], u_bounds[i][1], NU))
 
         X = np.array(np.meshgrid(*x_values)).T.reshape(-1,nx)
+        NDX = X.shape[0]
         U = np.array(np.meshgrid(*u_values)).T.reshape(-1,nu)
-        # create integrator (use options fed to MS solver)
-        opts = self.opts
 
-        numIntervals = opts.numIntervals
-        velocityMin = opts.minimumVelocity
+        # # create integrator (use options fed to MS solver)
+        # opts = self.opts
 
-        trainModel = train.exportModel()
-        trainIntegrator = TrainIntegrator(trainModel, opts.integrationMethod, opts.integrationOptions.toDict())
+        # numIntervals = opts.numIntervals
+        # velocityMin = opts.minimumVelocity
 
-        # gradient and curvature of current index
-        grad = self.points.iloc[i]['Gradient [permil]']/1e3
-        curv = self.points.iloc[i]['Curvature [1/m]']
+        # trainModel = train.exportModel()
+        # trainIntegrator = TrainIntegrator(trainModel, opts.integrationMethod, opts.integrationOptions.toDict())
 
-        out = integrator.solve(time=time[i], velocitySquared=velSq[i], ds=self.steps[i],
-            traction=Fel[i], pnBrake=Fpb[i], gradient=grad, curvature=curv)
+        # # gradient and curvature of current index
+        # grad = self.points.iloc[i]['Gradient [permil]']/1e3
+        # curv = self.points.iloc[i]['Curvature [1/m]']
 
-        xNxt1 = ca.vertcat(time[i+1], velSq[i+1])
-        xNxt2 = ca.vertcat(out['time'], out['velSquared'])
+        # out = integrator.solve(time=time[i], velocitySquared=velSq[i], ds=self.steps[i],
+        #     traction=Fel[i], pnBrake=Fpb[i], gradient=grad, curvature=curv)
 
-        # DP recursion
-        numIntervals = opts.numIntervals
+        # xNxt1 = ca.vertcat(time[i+1], velSq[i+1])
+        # xNxt2 = ca.vertcat(out['time'], out['velSquared'])
+
+        # # DP recursion
+        # numIntervals = opts.numIntervals
         
         # optimal value function
-        J_opt = np.full_like(X, 0.0)
+        J_opt = np.zeros((NDX, 1))
 
-        # loop over time
-        for i in range(numIntervals):
+        def f(x,u):
+            return 0.1 * x + u
+
+        def l(x,u):
+            return x.T@x + u.T@u
+
+        J_new = DPOperator(J_opt, l, x_values, u_values, f)
+
+        # # loop over time
+        # for i in range(numIntervals):
             
 
 
