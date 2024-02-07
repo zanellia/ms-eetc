@@ -180,14 +180,15 @@ class DPSolver():
         u_values = self.u_values
 
         J_new = np.inf * np.ones((NDX, 1))
+        U_opt = np.nan * np.zeros((NDX, nu))
 
         # loop over states
         for j in range(NDX):
-            x_ = X[j,:].T
+            x_ = np.atleast_2d(X[j,:]).T
 
             # loop over inputs
             for k in range(NDU):
-                u_ = U[k,:].T
+                u_ = np.atleast_2d(U[k,:]).T
 
                 # integrate dynamics
                 x_next = self.dynamics(x_,u_)
@@ -203,9 +204,11 @@ class DPSolver():
 
                 # evaluate argument of minimization
                 J_ = self.stage_cost(x_, u_) + J[idx_next_rs]
-
+                # print("u = [%f, %f], x = [%f, %f], x_+ = [%f, %f], J = %f, J_opt = % f" % (u_[0], u_[1], x_[0], x_[1], np.squeeze(x_next_p[0]), np.squeeze(x_next_p[1]), J_, J_new[j]))
                 if J_ < J_new[j]:
+                    # import pdb; pdb.set_trace()
                     J_new[j] = J_
+                    U_opt[j,:] = u_.T
 
-        return J_new
+        return J_new, U_opt
     
