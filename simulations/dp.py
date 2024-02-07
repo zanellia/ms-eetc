@@ -1,125 +1,91 @@
 import sys
 sys.path.append('..')
 
-import json
-
+import numpy as np
 import matplotlib.pyplot as plt
-
-from ocp import casadiSolver
-from train import Train
-from track import Track
-from utils import latexify, show, saveFig, postProcessDataFrame
-from efficiency import totalLossesFunction
-
-
-def plot(df0b_list, df1b_list, df2b_list, tp, figSize=None, filename=None):
-
-    latexFound = latexify()
-
-    fig, ax = plt.subplots(2, 2)
-
-    for indx,t in zip(range(len(df0b_list)),tp):
-
-        ii = 0 if indx in {0,1} else 1
-        jj = 0 if indx in {0,2} else 1
-
-        energy0 = round(df0b_list[indx]['Energy [kWh]'].sum(),1)
-        losses0 = round(df0b_list[indx]['Losses [kWh]'].sum(),1)
-
-        l0=ax[ii][jj].plot(df0b_list[indx]['Position [m]']*1e-3, df0b_list[indx]['Velocity [m/s]']*3.6, '-.', color='tab:blue', label='Perfect efficiency ({}/{} kWh)'.format(energy0, losses0))
-        ax[ii][jj].plot(df0b_list[indx]['Position - cvodes [m]']*1e-3, df0b_list[indx]['Velocity - cvodes [m/s]']*3.6, '-.', color='tab:blue')
-
-        if df1b_list is not None:
-
-            energy1 = round(df1b_list[indx]['Energy [kWh]'].sum(),1)
-            losses1 = round(df1b_list[indx]['Losses [kWh]'].sum(),1)
-
-            l1=ax[ii][jj].plot(df1b_list[indx]['Position [m]']*1e-3, df1b_list[indx]['Velocity [m/s]']*3.6, '--', color='tab:red', label='Static efficiency ({}/{} kWh)'.format(energy1, losses1))
-            ax[ii][jj].plot(df1b_list[indx]['Position - cvodes [m]']*1e-3, df1b_list[indx]['Velocity - cvodes [m/s]']*3.6, '--', color='tab:red')
-
-        else:
-
-            l1 = []
-
-        if df2b_list is not None:
-
-            energy2 = round(df2b_list[indx]['Energy [kWh]'].sum(),1)
-            losses2 = round(df2b_list[indx]['Losses [kWh]'].sum(),1)
-
-            l2=ax[ii][jj].plot(df2b_list[indx]['Position [m]']*1e-3, df2b_list[indx]['Velocity [m/s]']*3.6, '-', color='tab:green', label='Dynamic efficiency ({}/{} kWh)'.format(energy2, losses2))
-            ax[ii][jj].plot(df2b_list[indx]['Position - cvodes [m]']*1e-3, df2b_list[indx]['Velocity - cvodes [m/s]']*3.6, '-', color='tab:green')
-
-        else:
-
-            l2 = []
-
-        if ii == 1:
-
-            ax[ii][jj].set_xlabel('Position [km]')
-
-        if jj == 0:
-
-            ax[ii][jj].set_ylabel('Velocity [km/h]')
-
-        ax[ii][jj].grid(visible=True)
-
-        ax[ii][jj].legend(handles=l0+l1+l2, loc='lower right')
-
-        percentSymbol = '\%' if latexFound else '%'
-        ax[ii][jj].set_title(r'Time reserve: {}{}'.format(t, percentSymbol))
-
-        ax[ii][jj].set_xlim([0, 8.5])
-        ax[ii][jj].set_ylim([0, 145])
-
-    if figSize is not None:
-
-        fig.set_size_inches(figSize[0], figSize[1])
-
-    fig.tight_layout()
-
-    saveFig(fig, ax, filename)
-
-    show()
-
+from dp_solver import DPSolver
 
 if __name__ == '__main__':
 
-    v0 = 1
-    vN = 100/3.6
+    nx = 2
+    nu = 2
 
-    train = Train(config={'id':'NL_intercity_VIRM6'}, pathJSON='../trains')
-    train.forceMinPn = 0
+    NX = 10
+    NU = 10
+    
+    X1_MIN = 0.0
+    X1_MAX = 1.0
 
-    etaMax = 0.73
+    X2_MIN = 0.0
+    X2_MAX = 1.0
 
-    fun0 = lambda f,v: 0
-    fun1 = lambda f,v: f*v*(f>0)*(1 - etaMax)/etaMax - (1-etaMax)*f*v*(f<0)
-    fun2 = totalLossesFunction(train, auxiliaries=27000, etaGear=0.96)
+    U1_MIN = 0.0
+    U1_MAX = 1.0
 
-    minimumTime = 272.4726
+    U2_MIN = 0.0
+    U2_MAX = 1.0
 
-    df0b_list = []
-    df1b_list = []
-    df2b_list = []
+    x_bounds = ((X1_MIN, X1_MAX), (X2_MIN, X2_MAX))
+    u_bounds = ((U1_MIN, U1_MAX), (U2_MIN, U2_MAX))
 
-    tp = 30
+    # grid state and input space
+    X = np.zeros(tuple([NX] * nx))
+    U = np.zeros(tuple([NU] * nu))
 
-    tripTime = minimumTime*(1 + tp/100)
+    x_values = []
+    for i in range(nx):
+        x_values.append(np.linspace(x_bounds[i][0], x_bounds[i][1], NX))
 
-    track = Track(config={'id':'00_var_speed_limit_100'}, pathJSON='../tracks')
-    track.updateLimits(positionEnd=8500)
+    u_values = []
+    for i in range(nu):
+        u_values.append(np.linspace(u_bounds[i][0], u_bounds[i][1], NU))
 
-    with open('config.json') as file:
+    X = np.array(np.meshgrid(*x_values)).T.reshape(-1,nx)
+    NDX = X.shape[0]
+    U = np.array(np.meshgrid(*u_values)).T.reshape(-1,nu)
 
-        solverOpts = json.load(file)
+    def dynamics(x,u):
+        return 0.1 * x + u
+    def stage_cost(x,u):
+        return 0.5 * (x.T@x + u.T@u)
 
-    solverOpts['minimumVelocity'] = min(v0, vN)
+    solver = DPSolver(nx, nu, NX, NU, x_bounds, u_bounds, stage_cost, dynamics)
 
-    # # # solve problem with perfect efficiency
-    train.powerLosses = fun0
+    # # create integrator (use options fed to MS solver)
+    # opts = self.opts
 
-    ocp0 = casadiSolver(train, track, solverOpts)
+    # numIntervals = opts.numIntervals
+    # velocityMin = opts.minimumVelocity
 
-    # df0, _ = ocp0.solve(tripTime, terminalVelocity=vN, initialVelocity=v0)
-    ocp0.computeDPSolution()
+    # trainModel = train.exportModel()
+    # trainIntegrator = TrainIntegrator(trainModel, opts.integrationMethod, opts.integrationOptions.toDict())
+
+    # # gradient and curvature of current index
+    # grad = self.points.iloc[i]['Gradient [permil]']/1e3
+    # curv = self.points.iloc[i]['Curvature [1/m]']
+
+    # out = integrator.solve(time=time[i], velocitySquared=velSq[i], ds=self.steps[i],
+    #     traction=Fel[i], pnBrake=Fpb[i], gradient=grad, curvature=curv)
+
+    # xNxt1 = ca.vertcat(time[i+1], velSq[i+1])
+    # xNxt2 = ca.vertcat(out['time'], out['velSquared'])
+
+    # # DP recursion
+    # numIntervals = opts.numIntervals
+    
+    # optimal value function
+    J_opt = np.zeros((NDX, 1))
+
+    def f(x,u):
+        return 0.1 * x + u
+
+    def l(x,u):
+        return x.T@x + u.T@u
+
+    J_new = solver.DPOperator(J_opt, l, x_values, u_values, f)
+    import pdb; pdb.set_trace()
+
+    # # loop over time
+    # for i in range(numIntervals):
+        
 
