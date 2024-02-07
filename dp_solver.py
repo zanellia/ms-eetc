@@ -47,8 +47,55 @@ def project_onto_homogeneous_grid(value:np.ndarray, grid:list):
     return indexes, value_p
 
 class DPSolver():
-    def __init__(self, nx, nu, NX, NU, x_bounds, u_bounds, stage_cost,\
-            dynamics, terminal_cost=None, constraints=None):
+    def __init__(self, nx, nu, NX, NU, stage_cost,\
+            dynamics, terminal_cost=None, constraints=None, x_bounds=None, u_bounds=None, x_values=None, u_values=None):
+        
+        '''
+        Parameters
+        ----------
+        nx  :   int
+            number of states
+
+        nu  :   int
+            number of inputs 
+
+        NX  :   int
+            number of discretization points for the state space (per dimension)
+
+        NU  :   int
+            number of discretization points for the input space (per dimension)
+
+        stage_cost : function
+            stage cost function R^{nx} x R^{nu} -> R
+            
+        dynamics : function
+            dynamics function R^{nx} x R^{nu} -> R^{nx}
+
+        terminal_cost : function
+            terminal_cost function R^{nx} -> R
+
+        constraints : function
+            constraints function R^{nx} x R^{nu} -> R^{ng}
+
+        x_bounds : tuple
+            state bounds to be used for homogeneous discretization
+        
+        u_bounds : tuple
+            state bounds to be used for homogeneous discretization
+
+        x_values : list of nx np.ndarrays (1 X NX)
+            discretized state space
+        
+        u_values : list of nu np.ndarrays (1 X NU)
+            discretized input space
+
+
+        Returns
+        -------
+
+        np.ndarray
+            updated value function according to DP operator
+        '''
         
         self.nx = nx
         self.nu = nu
@@ -60,11 +107,47 @@ class DPSolver():
         self.terminal_cost = terminal_cost
         self.dynamics = dynamics
         self.constraints = constraints
-        
+
+        # grid state and input space
+        X = np.zeros(tuple([NX] * nx))
+        U = np.zeros(tuple([NU] * nu))
+
+        if x_values is None:
+            if x_bounds is None:
+                raise Exception('Either x_bounds or x_values need to e provided.') 
+            x_values = []
+            for i in range(nx):
+                x_values.append(np.linspace(x_bounds[i][0], x_bounds[i][1], NX))
+            self.x_values = x_values
+        else:
+            self.x_values = x_values
+
+        if u_values is None:
+            if u_bounds is None:
+                raise Exception('Either u_bounds or u_values need to e provided.') 
+            u_values = []
+            for i in range(nu):
+                u_values.append(np.linspace(u_bounds[i][0], u_bounds[i][1], NU))
+            self.u_values = u_values
+        else:
+            self.u_values = u_values
+
+        X = np.array(np.meshgrid(*x_values)).T.reshape(-1,nx)
+        NDX = X.shape[0]
+        U = np.array(np.meshgrid(*u_values)).T.reshape(-1,nu)
+
+        # number of discretized states
+        self.NDX = X.shape[0]
+
+        # number of discretized inputs
+        self.NDU = U.shape[0]
+
+        self.X = X
+        self.U = U
+            
         return
 
-    def DPOperator(self, J, l, x_values, u_values,\
-            integrator, constraints=None):
+    def DPOperator(self, J):
         '''
         Compute updated value function using DP operator, i.e, for all x, J_k(x) = min_u l(x,u) + J_{k+1}(f(x,u))
 
@@ -74,22 +157,6 @@ class DPSolver():
         J : np.ndarray (NDX)
             value function in tabular form
 
-        l : function
-            stage cost function x,u -> l(x,u)
-            
-
-        x_values : list of nx np.ndarrays (1 X NX)
-            discretized state space
-        
-        u_values : list of nu np.ndarrays (1 X NU)
-            discretized input space
-
-        integrator : function
-            integrator function x,u -> x_+
-
-        constraints : function
-            constraints function x,u -> g(x,u)
-
         Returns
         -------
 
@@ -97,22 +164,22 @@ class DPSolver():
             updated value function according to DP operator
         '''
 
-        nx = len(x_values)
-        nu = len(u_values)
+        nx = self.nx
+        nu = self.nu
 
         NX = self.NX
         NU = self.NU
 
-        X = np.array(np.meshgrid(*x_values)).T.reshape(-1,nx)
-        U = np.array(np.meshgrid(*u_values)).T.reshape(-1,nu)
+        X = self.X
+        U = self.U
 
-        # number of discretized states
-        NDX = X.shape[0]
+        NDX = self.NDX
+        NDU = self.NDU
 
-        # number of discretized inputs
-        NDU = U.shape[0]
+        x_values = self.x_values
+        u_values = self.u_values
 
-        J_new = np.inf*np.ones((NDX, 1))
+        J_new = np.inf * np.ones((NDX, 1))
 
         # loop over states
         for j in range(NDX):
@@ -123,7 +190,7 @@ class DPSolver():
                 u_ = U[k,:].T
 
                 # integrate dynamics
-                x_next = integrator(x_,u_)
+                x_next = self.dynamics(x_,u_)
 
                 # project onto state grid
                 idx_next, x_next_p = project_onto_homogeneous_grid(x_next, x_values)
@@ -135,7 +202,7 @@ class DPSolver():
                 idx_next_rs = np.unravel_index(np.ravel_multi_index(idx_next, [NX]*nx), (NDX))
 
                 # evaluate argument of minimization
-                J_ = l(x_, u_) + J[idx_next_rs]
+                J_ = self.stage_cost(x_, u_) + J[idx_next_rs]
 
                 if J_ < J_new[j]:
                     J_new[j] = J_
