@@ -114,7 +114,7 @@ class DPSolver():
 
         if x_values is None:
             if x_bounds is None:
-                raise Exception('Either x_bounds or x_values need to e provided.') 
+                raise Exception('Either x_bounds or x_values need to be provided.') 
             x_values = []
             for i in range(nx):
                 x_values.append(np.linspace(x_bounds[i][0], x_bounds[i][1], NX))
@@ -124,7 +124,7 @@ class DPSolver():
 
         if u_values is None:
             if u_bounds is None:
-                raise Exception('Either u_bounds or u_values need to e provided.') 
+                raise Exception('Either u_bounds or u_values need to be provided.') 
             u_values = []
             for i in range(nu):
                 u_values.append(np.linspace(u_bounds[i][0], u_bounds[i][1], NU))
