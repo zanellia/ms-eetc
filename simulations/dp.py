@@ -21,7 +21,7 @@ if __name__ == '__main__':
     nu = 2
 
     # number of points in the discretized state and input spaces
-    NX = 20
+    NX = 30
     NU = 10
     
     # bounds
@@ -40,9 +40,8 @@ if __name__ == '__main__':
     x_bounds = ((X1_MIN, X1_MAX), (X2_MIN, X2_MAX))
     u_bounds = ((U1_MIN, U1_MAX), (U2_MIN, U2_MAX))
 
-
     Q = 100
-    R = 0.00
+    R = 0.1
 
     def dynamics(x,u):
         return np.vstack((x[0] + 0.8 * x[1] + 0.5 * u[0], x[1] + 0.5 * u[1]))
@@ -134,6 +133,7 @@ if __name__ == '__main__':
     U_opt_qp = np.full_like(U_opt, np.nan)
     J_opt_qp = np.full_like(J_opt, np.nan)
 
+
     # plot value function
     X = solver.X
 
@@ -144,6 +144,25 @@ if __name__ == '__main__':
         sol = qp_solver(x0=w0, lbx=lbw, ubx=ubw, lbg=lbg, ubg=ubg)
         J_opt_qp[i] = sol['f'].full()
         U_opt_qp[i,:] = sol['x'].full()[nx:nx+nu].T
+
+
+    # compute relative error
+    dJ = 0.0
+    dU = 0.0
+    nJ = 0.0
+    nU = 0.0
+    for i in range(NDX):
+        if ~np.isinf(J_opt[i]): 
+            dJ += (J_opt[i] - J_opt_qp[i])**2
+            nJ += J_opt_qp[i]**2
+        if ~np.any(np.isnan(U_opt[i,:])): 
+            dU += np.linalg.norm(U_opt[i,:] - U_opt_qp[i,:])**2
+            nU += np.linalg.norm(U_opt_qp[i])**2
+
+    dJ = np.sqrt(dJ)/np.sqrt(nJ)
+    dU = np.sqrt(dU)/np.sqrt(nU)
+
+    print("dJ = %f, dU = %f" % (dJ, dU))
 
     fig = plt.figure()
     ax1 = fig.add_subplot(131, projection='3d')
