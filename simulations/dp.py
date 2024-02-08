@@ -2,11 +2,15 @@ import sys
 sys.path.append('..')
 
 import numpy as np
+import casadi as ca
+import matplotlib
+matplotlib.use("tkAgg")
 import matplotlib.pyplot as plt
+plt.rcParams['text.usetex'] = True
 from dp_solver import DPSolver
 
 if __name__ == '__main__':
-
+    
     # number of independent variable steps
     N = 10
 
@@ -39,14 +43,18 @@ if __name__ == '__main__':
 
     Q = 100
     R = 0.00
+
     def dynamics(x,u):
         return np.vstack((x[0] + 0.8 * x[1] + 0.5 * u[0], x[1] + 0.5 * u[1]))
+
     def stage_cost(x,u):
         return 0.5 * (Q * (x[0]**2 + x[1]**2) + R * (u[0]**2 + u[1]**2))
+
     def terminal_cost(x):
         return 0.5 * (Q * (x[0]**2 + x[1]**2))
-    # def constraints(x,u):
-    #     return np.vstack((u[0] - 1.0, -u[0] - 1.0, u[1] - 1.0, -u[1] - 1.0)
+
+    def constraints(x,u):
+        return np.vstack((u[0] - U1_MAX, -u[0] + U1_MIN, u[1] - U2_MAX, -u[1] + U2_MIN))
 
     solver = DPSolver(nx, nu, NX, NU, stage_cost, dynamics,\
         x_bounds=x_bounds, u_bounds=u_bounds)
@@ -64,21 +72,95 @@ if __name__ == '__main__':
         print('it {}'.format(i))
         J_opt, U_opt = solver.DPOperator(J_opt)
 
+    # compute reference solution using parametric QP
+    # optimization variables
+    w = []
+    # initial guess
+    w0 = []
+    # constraints
+    g = []
+    lbg = []
+    ubg = []
+    lbw = []
+    ubw = []
+    # objective function
+    f = 0.0
+    # initial state
+    Xk = ca.SX.sym('X0', nx, 1) 
+    w+=[Xk]
+    w0+=[np.zeros((nx,1))]
+    lbw += [-np.inf*np.ones((nx,1))]
+    ubw += [np.inf*np.ones((nx,1))]
+
+    g+=[Xk]
+    lbg+=[np.zeros((nx,1))]
+    ubg+=[np.zeros((nx,1))]
+    for i in range(N):
+        Uk = ca.SX.sym('U' + str(i), nu, 1) 
+        w+=[Uk]
+        w0+=[np.zeros((nu,1))]
+        lbw += [-np.inf*np.ones((nu,1))]
+        ubw += [np.inf*np.ones((nu,1))]
+
+        g_ = constraints(Xk, Uk)
+        nh = g_.shape[0]
+        g+=[g_]
+        lbg+=[-np.inf * np.ones((nh,1))]
+        ubg+=[np.zeros((nh,1))]
+
+        f+=stage_cost(Xk, Uk)
+        # dynamics
+        x_next = dynamics(Xk, Uk)
+
+        Xk = ca.SX.sym('X' + str(i+1), nx, 1) 
+        w+=[Xk]
+        w0+=[np.zeros((nx,1))]
+        lbw += [-np.inf*np.ones((nx,1))]
+        ubw += [np.inf*np.ones((nx,1))]
+
+        g+=[Xk - x_next]
+        lbg+=[np.zeros((nx,1))]
+        ubg+=[np.zeros((nx,1))]
+
+    f+=terminal_cost(Xk)
+    w0 = ca.vertcat(*w0)
+    lbw = ca.vertcat(*lbw)
+    ubw = ca.vertcat(*ubw)
+    lbg = ca.vertcat(*lbg)
+    ubg = ca.vertcat(*ubg)
+    prob = {'f': f, 'x': ca.vertcat(*w), 'g': ca.vertcat(*g)}
+    qp_solver = ca.nlpsol('solver', 'ipopt', prob);
+
+    U_opt_qp = np.full_like(U_opt, np.nan)
+    J_opt_qp = np.full_like(J_opt, np.nan)
+
     # plot value function
     X = solver.X
+
+    for i in range(NDX):
+        x_ = X[i,:].T
+        lbg[0:nx] = x_
+        ubg[0:nx] = x_
+        sol = qp_solver(x0=w0, lbx=lbw, ubx=ubw, lbg=lbg, ubg=ubg)
+        J_opt_qp[i] = sol['f'].full()
+        U_opt_qp[i,:] = sol['x'].full()[nx:nx+nu].T
+
     fig = plt.figure()
     ax1 = fig.add_subplot(131, projection='3d')
     ax2 = fig.add_subplot(132, projection='3d')
     ax3 = fig.add_subplot(133, projection='3d')
     ax1.scatter(X[:,0], X[:,1], J_opt)
+    ax1.scatter(X[:,0], X[:,1], J_opt_qp, 'r')
     ax1.set_xlabel(r"$x_1$")
     ax1.set_ylabel(r"$x_2$")
     ax1.set_zlabel(r"$J^*(\bar{x})$")
     ax2.scatter(X[:,0], X[:,1], U_opt[:,0])
+    ax2.scatter(X[:,0], X[:,1], U_opt_qp[:,0], 'r')
     ax2.set_xlabel(r"$x_1$")
     ax2.set_ylabel(r"$x_2$")
     ax2.set_zlabel(r"$u_1^*(\bar{x})$")
     ax3.scatter(X[:,0], X[:,1], U_opt[:,1])
+    ax3.scatter(X[:,0], X[:,1], U_opt_qp[:,1], 'r')
     ax3.set_xlabel(r"$x_1$")
     ax3.set_ylabel(r"$x_2$")
     ax3.set_zlabel(r"$u_2^*(\bar{x})$")
