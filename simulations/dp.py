@@ -21,7 +21,7 @@ if __name__ == '__main__':
     nu = 2
 
     # number of points in the discretized state and input spaces
-    NX = 30
+    NX = 50
     NU = 10
     
     # bounds
@@ -56,7 +56,7 @@ if __name__ == '__main__':
         return np.vstack((u[0] - U1_MAX, -u[0] + U1_MIN, u[1] - U2_MAX, -u[1] + U2_MIN))
 
     solver = DPSolver(nx, nu, NX, NU, stage_cost, dynamics,\
-        x_bounds=x_bounds, u_bounds=u_bounds)
+        x_bounds=x_bounds, u_bounds=u_bounds, constraints=constraints)
     
     NDX = solver.X.shape[0]
     # optimal value function

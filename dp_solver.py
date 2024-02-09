@@ -202,6 +202,11 @@ class DPSolver():
                 # obtain index in reshaped form
                 idx_next_rs = np.unravel_index(np.ravel_multi_index(idx_next, [NX]*nx), (NDX))
 
+                # constraint satisfaction
+                if self.constraints is not None:
+                    if np.any(self.constraints(x_next_p,u_) > 0.0):
+                        continue
+
                 # evaluate argument of minimization
                 J_ = self.stage_cost(x_, u_) + J[idx_next_rs]
 
@@ -210,7 +215,6 @@ class DPSolver():
                 #     np.squeeze(x_next_p[0]), np.squeeze(x_next_p[1]), J_, J_new[j]))
 
                 if J_ < J_new[j]:
-                    # import pdb; pdb.set_trace()
                     J_new[j] = J_
                     U_opt[j,:] = u_.T
 
