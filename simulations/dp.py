@@ -55,7 +55,7 @@ if __name__ == '__main__':
     def constraints(x,u):
         return np.vstack((u[0] - U1_MAX, -u[0] + U1_MIN, u[1] - U2_MAX, -u[1] + U2_MIN))
 
-    solver = DPSolver(nx, nu, NX, NU, stage_cost, dynamics,\
+    solver = DPSolver(nx, nu, NX, NU, [stage_cost]*(N), dynamics,\
         x_bounds=x_bounds, u_bounds=u_bounds, constraints=constraints)
     
     NDX = solver.X.shape[0]
@@ -66,10 +66,10 @@ if __name__ == '__main__':
     for i in range(NDX):
         J_opt[i] = terminal_cost(np.atleast_2d(solver.X[i,:]).T)
 
-    # loop over time
-    for i in range(N):
-        print('it {}'.format(i))
-        J_opt, U_opt = solver.DPOperator(J_opt)
+    # loop over time in reversed order
+    for i in range(N-1,-1,-1):
+        print('stage = {}'.format(i))
+        J_opt, U_opt = solver.DPOperator(J_opt,i)
 
     # compute reference solution using parametric QP
     # optimization variables
@@ -144,7 +144,6 @@ if __name__ == '__main__':
         sol = qp_solver(x0=w0, lbx=lbw, ubx=ubw, lbg=lbg, ubg=ubg)
         J_opt_qp[i] = sol['f'].full()
         U_opt_qp[i,:] = sol['x'].full()[nx:nx+nu].T
-
 
     # compute relative error
     dJ = 0.0

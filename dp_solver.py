@@ -65,17 +65,17 @@ class DPSolver():
         NU  :   int
             number of discretization points for the input space (per dimension)
 
-        stage_cost : function
-            stage cost function R^{nx} x R^{nu} -> R
+        stage_cost : function or list of functions
+            stage cost function R^{nx} x R^{nu} -> R - list of functions for time-varying formulations
             
         dynamics : function
-            dynamics function R^{nx} x R^{nu} -> R^{nx}
+            dynamics function R^{nx} x R^{nu} -> R^{nx} - list of functions for time-varying formulations
 
-        terminal_cost : function
+        terminal_cost : function or list of functions
             terminal_cost function R^{nx} -> R
 
-        constraints : function
-            constraints function R^{nx} x R^{nu} -> R^{ng}
+        constraints : function or list of functions
+            constraints function R^{nx} x R^{nu} -> R^{ng} - list of functions for time-varying formulations
 
         x_bounds : tuple
             state bounds to be used for homogeneous discretization
@@ -97,6 +97,8 @@ class DPSolver():
             updated value function according to DP operator
         '''
         
+        # TODO(andrea): add some more checks here
+
         self.nx = nx
         self.nu = nu
         self.NX = NX
@@ -147,7 +149,7 @@ class DPSolver():
             
         return
 
-    def DPOperator(self, J):
+    def DPOperator(self, J, stage_idx = None):
         '''
         Compute updated value function using DP operator, i.e, for all x, J_k(x) = min_u l(x,u) + J_{k+1}(f(x,u))
 
@@ -156,6 +158,9 @@ class DPSolver():
 
         J : np.ndarray (NDX)
             value function in tabular form
+
+        stage_idx : int
+            stage index (for time-varying formulations)
 
         Returns
         -------
@@ -182,6 +187,32 @@ class DPSolver():
         J_new = np.inf * np.ones((NDX, 1))
         U_opt = np.nan * np.zeros((NDX, nu))
 
+        if stage_idx is not None:
+            # check that any of dynamics, stage_cost, constraints is stage-varying
+            if (not isinstance(self.dynamics, list)) and (not isinstance(self.constraints, list)) and (not isinstance(self.stage_cost, list)):
+                raise Exception('stage_idx provided, but problem formulation is not stage-varying')
+
+        if isinstance(self.dynamics, list):
+            if stage_idx is None:
+                raise Exception('Dynamics are stage-varying, but no stage index was provided.')
+            dynamics = self.dynamics[stage_idx]
+        else:
+            dynamics = self.dynamics
+
+        if isinstance(self.stage_cost, list):
+            if stage_idx is None:
+                raise Exception('Stage cost is stage-varying, but no stage index was provided.')
+            stage_cost = self.stage_cost[stage_idx]
+        else:
+            stage_cost = self.stage_cost
+
+        if isinstance(self.constraints, list):
+            if stage_idx is None:
+                raise Exception('Constraints are stage-varying, but no stage index was provided.')
+            constraints = self.constraints[stage_idx]
+        else:
+            constraints = self.constraints
+
         # loop over states
         for j in range(NDX):
             x_ = np.atleast_2d(X[j,:]).T
@@ -191,7 +222,7 @@ class DPSolver():
                 u_ = np.atleast_2d(U[k,:]).T
 
                 # integrate dynamics
-                x_next = self.dynamics(x_,u_)
+                x_next = dynamics(x_,u_)
 
                 # project onto state grid
                 idx_next, x_next_p = project_onto_homogeneous_grid(x_next, x_values)
@@ -203,12 +234,12 @@ class DPSolver():
                 idx_next_rs = np.unravel_index(np.ravel_multi_index(idx_next, [NX]*nx), (NDX))
 
                 # constraint satisfaction
-                if self.constraints is not None:
-                    if np.any(self.constraints(x_next_p,u_) > 0.0):
+                if constraints is not None:
+                    if np.any(constraints(x_next_p,u_) > 0.0):
                         continue
 
                 # evaluate argument of minimization
-                J_ = self.stage_cost(x_, u_) + J[idx_next_rs]
+                J_ = stage_cost(x_, u_) + J[idx_next_rs]
 
                 # print("u = [%f, %f], x = [%f, %f], x_+ = [%f, %f], x_+_p = [%f, %f], J = %f, J_opt = % f"\
                 #     % (u_[0], u_[1], x_[0], x_[1], np.squeeze(x_next[0]), np.squeeze(x_next[1]),\
