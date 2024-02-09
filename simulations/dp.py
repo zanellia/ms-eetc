@@ -3,6 +3,7 @@ sys.path.append('..')
 
 import numpy as np
 import casadi as ca
+import progressbar
 import matplotlib
 matplotlib.use("tkAgg")
 import matplotlib.pyplot as plt
@@ -66,6 +67,7 @@ if __name__ == '__main__':
     for i in range(NDX):
         J_opt[i] = terminal_cost(np.atleast_2d(solver.X[i,:]).T)
 
+    print('Solving optimal control problem with DP...')
     # loop over time in reversed order
     for i in range(N-1,-1,-1):
         print('stage = {}'.format(i))
@@ -128,7 +130,8 @@ if __name__ == '__main__':
     lbg = ca.vertcat(*lbg)
     ubg = ca.vertcat(*ubg)
     prob = {'f': f, 'x': ca.vertcat(*w), 'g': ca.vertcat(*g)}
-    qp_solver = ca.nlpsol('solver', 'ipopt', prob);
+    opts = {'ipopt.print_level':0, 'print_time':0}
+    qp_solver = ca.nlpsol('solver', 'ipopt', prob, opts);
 
     U_opt_qp = np.full_like(U_opt, np.nan)
     J_opt_qp = np.full_like(J_opt, np.nan)
@@ -137,31 +140,42 @@ if __name__ == '__main__':
     # plot value function
     X = solver.X
 
-    for i in range(NDX):
-        x_ = X[i,:].T
-        lbg[0:nx] = x_
-        ubg[0:nx] = x_
-        sol = qp_solver(x0=w0, lbx=lbw, ubx=ubw, lbg=lbg, ubg=ubg)
-        J_opt_qp[i] = sol['f'].full()
-        U_opt_qp[i,:] = sol['x'].full()[nx:nx+nu].T
+    print('Solving optimal control problem with multiple shooting')
+    with progressbar.ProgressBar(max_value=NDX) as bar:
+        for i in range(NDX):
+            x_ = X[i,:].T
+            lbg[0:nx] = x_
+            ubg[0:nx] = x_
+            sol = qp_solver(x0=w0, lbx=lbw, ubx=ubw, lbg=lbg, ubg=ubg)
+            stats = qp_solver.stats()
+            if stats['return_status'] != 'Solve_Succeeded':
+                raise Warning('OCP solver returned %s ' % (stats['return_status']))
+            J_opt_qp[i] = sol['f'].full()
+            U_opt_qp[i,:] = sol['x'].full()[nx:nx+nu].T
+            bar.update(i)
 
-    # compute relative error
+    # compute normalized infinity norm of error
     dJ = 0.0
+    nJ = 1.0
     dU = 0.0
-    nJ = 0.0
-    nU = 0.0
+    nU = 1.0
     for i in range(NDX):
-        if ~np.isinf(J_opt[i]): 
-            dJ += (J_opt[i] - J_opt_qp[i])**2
-            nJ += J_opt_qp[i]**2
+        if ~np.any(np.isinf(J_opt[i])): 
+            dJ_ = np.abs(J_opt[i] - J_opt_qp[i])
+            if dJ_ > dJ:
+                dJ = dJ_
+            if J_opt_qp[i] > nJ:
+                nJ = J_opt_qp[i]
         if ~np.any(np.isnan(U_opt[i,:])): 
-            dU += np.linalg.norm(U_opt[i,:] - U_opt_qp[i,:])**2
-            nU += np.linalg.norm(U_opt_qp[i])**2
+            dU_ = np.linalg.norm(U_opt[i] - U_opt_qp[i], np.inf)
+            if dU_ > dU:
+                dU = dU_
+            if np.linalg.norm(U_opt_qp[i], np.inf) > nU:
+                nU = np.linalg.norm(U_opt_qp[i], np.inf)
 
-    dJ = np.sqrt(dJ)/np.sqrt(nJ)
-    dU = np.sqrt(dU)/np.sqrt(nU)
-
-    print("dJ = %f, dU = %f" % (dJ, dU))
+    dJ = dJ/nJ
+    dU = dU/nU
+    print("inf. norm: dJ = %f, dU = %f" % (dJ, dU))
 
     fig = plt.figure()
     ax1 = fig.add_subplot(131, projection='3d')

@@ -1,4 +1,5 @@
 import numpy as np
+import progressbar
 
 def project_onto_homogeneous_grid(value:np.ndarray, grid:list):
     '''
@@ -213,41 +214,43 @@ class DPSolver():
         else:
             constraints = self.constraints
 
-        # loop over states
-        for j in range(NDX):
-            x_ = np.atleast_2d(X[j,:]).T
+        with progressbar.ProgressBar(max_value=NDX) as bar:
+            # loop over states
+            for j in range(NDX):
+                x_ = np.atleast_2d(X[j,:]).T
 
-            # loop over inputs
-            for k in range(NDU):
-                u_ = np.atleast_2d(U[k,:]).T
+                # loop over inputs
+                for k in range(NDU):
+                    u_ = np.atleast_2d(U[k,:]).T
 
-                # integrate dynamics
-                x_next = dynamics(x_,u_)
+                    # integrate dynamics
+                    x_next = dynamics(x_,u_)
 
-                # project onto state grid
-                idx_next, x_next_p = project_onto_homogeneous_grid(x_next, x_values)
+                    # project onto state grid
+                    idx_next, x_next_p = project_onto_homogeneous_grid(x_next, x_values)
 
-                if idx_next is None:
-                    continue
-
-                # obtain index in reshaped form
-                idx_next_rs = np.unravel_index(np.ravel_multi_index(idx_next, [NX]*nx), (NDX))
-
-                # constraint satisfaction
-                if constraints is not None:
-                    if np.any(constraints(x_next_p,u_) > 0.0):
+                    if idx_next is None:
                         continue
 
-                # evaluate argument of minimization
-                J_ = stage_cost(x_, u_) + J[idx_next_rs]
+                    # obtain index in reshaped form
+                    idx_next_rs = np.unravel_index(np.ravel_multi_index(idx_next, [NX]*nx), (NDX))
 
-                # print("u = [%f, %f], x = [%f, %f], x_+ = [%f, %f], x_+_p = [%f, %f], J = %f, J_opt = % f"\
-                #     % (u_[0], u_[1], x_[0], x_[1], np.squeeze(x_next[0]), np.squeeze(x_next[1]),\
-                #     np.squeeze(x_next_p[0]), np.squeeze(x_next_p[1]), J_, J_new[j]))
+                    # constraint satisfaction
+                    if constraints is not None:
+                        if np.any(constraints(x_next_p,u_) > 0.0):
+                            continue
 
-                if J_ < J_new[j]:
-                    J_new[j] = J_
-                    U_opt[j,:] = u_.T
+                    # evaluate argument of minimization
+                    J_ = stage_cost(x_, u_) + J[idx_next_rs]
+
+                    # print("u = [%f, %f], x = [%f, %f], x_+ = [%f, %f], x_+_p = [%f, %f], J = %f, J_opt = % f"\
+                    #     % (u_[0], u_[1], x_[0], x_[1], np.squeeze(x_next[0]), np.squeeze(x_next[1]),\
+                    #     np.squeeze(x_next_p[0]), np.squeeze(x_next_p[1]), J_, J_new[j]))
+
+                    if J_ < J_new[j]:
+                        J_new[j] = J_
+                        U_opt[j,:] = u_.T
+                bar.update(j)
 
         return J_new, U_opt
     
