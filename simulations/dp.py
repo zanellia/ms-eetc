@@ -13,7 +13,7 @@ from dp_solver import DPSolver
 if __name__ == '__main__':
     
     # number of independent variable steps
-    N = 10
+    N = 1
 
     # number of states
     nx = 2
@@ -22,7 +22,7 @@ if __name__ == '__main__':
     nu = 2
 
     # number of points in the discretized state and input spaces
-    NX = 50
+    NX = 10
     NU = 10
     
     # bounds
@@ -54,10 +54,10 @@ if __name__ == '__main__':
         return 0.5 * (Q * (x[0]**2 + x[1]**2))
 
     def constraints(x,u):
-        return np.vstack((u[0] - U1_MAX, -u[0] + U1_MIN, u[1] - U2_MAX, -u[1] + U2_MIN))
+        return np.vstack((u[0], u[1]))
 
     solver = DPSolver(nx, nu, NX, NU, [stage_cost]*(N), dynamics,\
-        x_bounds=x_bounds, u_bounds=u_bounds, constraints=constraints)
+        x_bounds=x_bounds, u_bounds=u_bounds, constraints=constraints, lbg=np.vstack((U1_MIN, U2_MIN)), ubg=np.vstack((U1_MAX, U2_MAX)))
     
     NDX = solver.X.shape[0]
     # optimal value function
@@ -106,8 +106,8 @@ if __name__ == '__main__':
         g_ = constraints(Xk, Uk)
         nh = g_.shape[0]
         g+=[g_]
-        lbg+=[-np.inf * np.ones((nh,1))]
-        ubg+=[np.zeros((nh,1))]
+        lbg+=[np.vstack((U1_MIN, U2_MIN))]
+        ubg+=[np.vstack((U2_MAX, U2_MAX))]
 
         f+=stage_cost(Xk, Uk)
         # dynamics

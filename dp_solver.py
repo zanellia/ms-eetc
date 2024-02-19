@@ -49,7 +49,8 @@ def project_onto_homogeneous_grid(value:np.ndarray, grid:list):
 
 class DPSolver():
     def __init__(self, nx, nu, NX, NU, stage_cost,\
-            dynamics, terminal_cost=None, constraints=None, x_bounds=None, u_bounds=None, x_values=None, u_values=None):
+            dynamics, terminal_cost=None, constraints=None, lbg=None, ubg=None, lbx=None, ubx=None, lbu=None, ubu=None,\
+            x_bounds=None, u_bounds=None, x_values=None, u_values=None):
         
         '''
         Parameters
@@ -77,6 +78,24 @@ class DPSolver():
 
         constraints : function or list of functions
             constraints function R^{nx} x R^{nu} -> R^{ng} - list of functions for time-varying formulations
+
+        lbg : np.ndarray or list of np.ndarrays
+            lower bounds on constraints
+
+        ubg : np.ndarray or list of np.ndarrays
+            upper bounds on constraints
+
+        lbx : np.ndarray or list of np.ndarrays
+            lower bounds on states
+
+        ubx : np.ndarray or list of np.ndarrays
+            upper bounds on states
+
+        lbu : np.ndarray or list of np.ndarrays
+            lower bounds on inputs
+
+        ubu : np.ndarray or list of np.ndarrays
+            upper bounds on inputs 
 
         x_bounds : tuple
             state bounds to be used for homogeneous discretization
@@ -110,6 +129,12 @@ class DPSolver():
         self.terminal_cost = terminal_cost
         self.dynamics = dynamics
         self.constraints = constraints
+        self.lbg = lbg
+        self.ubg = ubg
+        self.lbx = lbx
+        self.ubx = ubx
+        self.lbu = lbu
+        self.ubu = ubu
 
         # grid state and input space
         X = np.zeros(tuple([NX] * nx))
@@ -214,14 +239,82 @@ class DPSolver():
         else:
             constraints = self.constraints
 
+        if isinstance(self.lbg, list):
+            if stage_idx is None:
+                raise Exception('Bounds are stage-varying, but no stage index was provided.')
+            lbg = self.lbg[stage_idx]
+        else:
+            lbg = self.lbg
+
+        if isinstance(self.ubg, list):
+            if stage_idx is None:
+                raise Exception('Bounds are stage-varying, but no stage index was provided.')
+            ubg = self.ubg[stage_idx]
+        else:
+            ubg = self.ubg
+
+        if isinstance(self.lbx, list):
+            if stage_idx is None:
+                raise Exception('Bounds are stage-varying, but no stage index was provided.')
+            lbx = self.lbx[stage_idx]
+        else:
+            lbx = self.lbx
+
+        if isinstance(self.ubx, list):
+            if stage_idx is None:
+                raise Exception('Bounds are stage-varying, but no stage index was provided.')
+            ubx = self.ubx[stage_idx]
+        else:
+            ubx = self.ubx
+
+        if isinstance(self.lbu, list):
+            if stage_idx is None:
+                raise Exception('Bounds are stage-varying, but no stage index was provided.')
+            lbu = self.lbu[stage_idx]
+        else:
+            lbu = self.lbu
+
+        if isinstance(self.ubu, list):
+            if stage_idx is None:
+                raise Exception('Bounds are stage-varying, but no stage index was provided.')
+            ubu = self.ubu[stage_idx]
+        else:
+            ubu = self.ubu
+
         with progressbar.ProgressBar(max_value=NDX) as bar:
             # loop over states
             for j in range(NDX):
                 x_ = np.atleast_2d(X[j,:]).T
 
+                # simple state bound satisfaction
+                if ubx is not None:
+                    if np.any(x_ > ubx):
+                        continue
+
+                if lbx is not None:
+                    if np.any(x_ < lbx):
+                        continue
+
                 # loop over inputs
                 for k in range(NDU):
                     u_ = np.atleast_2d(U[k,:]).T
+
+                    # simple input bound satisfaction
+                    if ubu is not None:
+                        if np.any(u_ > ubu):
+                            continue
+
+                    if lbu is not None:
+                        if np.any(u_ < lbu):
+                            continue
+
+                    # constraint satisfaction
+                    if constraints is not None:
+                        if np.any(constraints(x_,u_) > ubg):
+                            continue
+
+                        if np.any(constraints(x_,u_) < lbg):
+                            continue
 
                     # integrate dynamics
                     x_next = dynamics(x_,u_)
@@ -234,11 +327,6 @@ class DPSolver():
 
                     # obtain index in reshaped form
                     idx_next_rs = np.unravel_index(np.ravel_multi_index(idx_next, [NX]*nx), (NDX))
-
-                    # constraint satisfaction
-                    if constraints is not None:
-                        if np.any(constraints(x_next_p,u_) > 0.0):
-                            continue
 
                     # evaluate argument of minimization
                     J_ = stage_cost(x_, u_) + J[idx_next_rs]
