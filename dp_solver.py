@@ -308,16 +308,18 @@ class DPSolver():
                         if np.any(u_ < lbu):
                             continue
 
-                    # constraint satisfaction
-                    if constraints is not None:
-                        if np.any(constraints(x_,u_) > ubg):
-                            continue
-
-                        if np.any(constraints(x_,u_) < lbg):
-                            continue
-
                     # integrate dynamics
                     x_next = dynamics(x_,u_)
+
+                    # constraint satisfaction
+                    if constraints is not None:
+                        import pdb; pdb.set_trace()
+                        if np.any(constraints(x_,u_,x_next) > ubg):
+                            continue
+
+                        if np.any(constraints(x_,u_,x_next) < lbg):
+                            continue
+
 
                     # project onto state grid
                     idx_next, x_next_p = project_onto_homogeneous_grid(x_next, x_values)
@@ -329,7 +331,7 @@ class DPSolver():
                     idx_next_rs = np.unravel_index(np.ravel_multi_index(idx_next, [NX]*nx), (NDX))
 
                     # evaluate argument of minimization
-                    J_ = stage_cost(x_, u_) + J[idx_next_rs]
+                    J_ = stage_cost(x_, u_, x_next) + J[idx_next_rs]
 
                     # print("u = [%f, %f], x = [%f, %f], x_+ = [%f, %f], x_+_p = [%f, %f], J = %f, J_opt = % f"\
                     #     % (u_[0], u_[1], x_[0], x_[1], np.squeeze(x_next[0]), np.squeeze(x_next[1]),\
