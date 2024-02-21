@@ -229,12 +229,12 @@ if __name__ == '__main__':
 
         speedLimit = min(speedLimit, points.iloc[i-1]['Speed limit [m/s]'])  # do not accelerate before speed limit increase
 
-        lbx.append(np.array([initialTime, velocityMin**2]))
-        ubx.append(np.array([terminalTime, speedLimit**2]))
+        lbx.append(np.vstack((initialTime, velocityMin**2)))
+        ubx.append(np.vstack((terminalTime, speedLimit**2)))
 
     # terminal state constraints
-    lbx.append(np.array([initialTime, terminalVelocitySquared - velSlack]))
-    ubx.append(np.array([terminalTime, terminalVelocitySquared + velSlack]))
+    lbx.append(np.atleast_2d(np.array([initialTime, terminalVelocitySquared - velSlack])).T)
+    ubx.append(np.atleast_2d(np.array([terminalTime, terminalVelocitySquared + velSlack])).T)
 
     # create DP solver
     solver = DPSolver(nx, nu, NX, NU, stage_cost, dynamics,\
