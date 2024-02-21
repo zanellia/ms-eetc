@@ -313,7 +313,7 @@ class DPSolver():
 
                     # constraint satisfaction
                     if constraints is not None:
-                        import pdb; pdb.set_trace()
+                        temp = constraints(x_,u_,x_next)
                         if np.any(constraints(x_,u_,x_next) > ubg):
                             continue
 

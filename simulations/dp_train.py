@@ -146,10 +146,10 @@ if __name__ == '__main__':
                 lowerBound = 0 if not withRgBrake else powerMin if powerMin is not None else forceMin*velocityMax
 
                 def g_p(x, u, xnext): 
-                    return u[0]*ca.sqrt(x[1]), u[0]*ca.sqrt(xnext[1])
+                    return np.vstack((u[0]*ca.sqrt(x[1]), u[0]*ca.sqrt(xnext[1])))
 
-                ubg_ = abs(upperBound)*2
-                lbg_ = -abs(lowerBound)*2
+                ubg_ = abs(upperBound)*np.ones((2,1))
+                lbg_ = -abs(lowerBound)*np.ones((2,1))
             else:
                 ubg_ = np.zeros((0,1))
                 lbg_ = np.zeros((0,1))
@@ -161,12 +161,18 @@ if __name__ == '__main__':
             grad = points.iloc[i]['Gradient [permil]']/1e3
             curv = points.iloc[i]['Curvature [1/m]']
 
-            # TODO(andrea): handle variable number of inputs
+            # TODO(andrea): handle variable number of inputs in a cleaner way
             # acceleration constraints
-            def g_(x, u, x_next): 
-                return ca.vertcat(g_p(x,u,x_next),\
-                trainModel.accelerationFun(ca.vertcat(x[0], x[1]),\
-                u, grad, curv))
+            if withPnBrake:
+                def g_(x, u, x_next): 
+                    return ca.vertcat(g_p(x,u,x_next),\
+                    trainModel.accelerationFun(ca.vertcat(x[0], x[1]),\
+                    u, grad, curv))
+            else:
+                def g_(x, u, x_next): 
+                    return ca.vertcat(g_p(x,u,x_next),\
+                    trainModel.accelerationFun(ca.vertcat(x[0], x[1]),\
+                    u[0], grad, curv))
             
             lbg_ = np.vstack((lbg_,accMin))
             ubg_ = np.vstack((ubg_,accMax))
@@ -254,126 +260,20 @@ if __name__ == '__main__':
         print('stage = {}'.format(i))
         J_opt, U_opt = solver.DPOperator(J_opt,i)
 
-    # compute reference solution using parametric QP
-    # optimization variables
-    w = []
-    # initial guess
-    w0 = []
-    # constraints
-    g = []
-    lbg = []
-    ubg = []
-    lbw = []
-    ubw = []
-    # objective function
-    f = 0.0
-    # initial state
-    Xk = ca.SX.sym('X0', nx, 1) 
-    w+=[Xk]
-    w0+=[np.zeros((nx,1))]
-    lbw += [-np.inf*np.ones((nx,1))]
-    ubw += [np.inf*np.ones((nx,1))]
-
-    g+=[Xk]
-    lbg+=[np.zeros((nx,1))]
-    ubg+=[np.zeros((nx,1))]
-    for i in range(N):
-        Uk = ca.SX.sym('U' + str(i), nu, 1) 
-        w+=[Uk]
-        w0+=[np.zeros((nu,1))]
-        lbw += [-np.inf*np.ones((nu,1))]
-        ubw += [np.inf*np.ones((nu,1))]
-
-        g_ = constraints(Xk, Uk)
-        nh = g_.shape[0]
-        g+=[g_]
-        lbg+=[-np.inf * np.ones((nh,1))]
-        ubg+=[np.zeros((nh,1))]
-
-        f+=stage_cost(Xk, Uk)
-        # dynamics
-        x_next = dynamics(Xk, Uk)
-
-        Xk = ca.SX.sym('X' + str(i+1), nx, 1) 
-        w+=[Xk]
-        w0+=[np.zeros((nx,1))]
-        lbw += [-np.inf*np.ones((nx,1))]
-        ubw += [np.inf*np.ones((nx,1))]
-
-        g+=[Xk - x_next]
-        lbg+=[np.zeros((nx,1))]
-        ubg+=[np.zeros((nx,1))]
-
-    f+=terminal_cost(Xk)
-    w0 = ca.vertcat(*w0)
-    lbw = ca.vertcat(*lbw)
-    ubw = ca.vertcat(*ubw)
-    lbg = ca.vertcat(*lbg)
-    ubg = ca.vertcat(*ubg)
-    prob = {'f': f, 'x': ca.vertcat(*w), 'g': ca.vertcat(*g)}
-    opts = {'ipopt.print_level':0, 'print_time':0}
-    qp_solver = ca.nlpsol('solver', 'ipopt', prob, opts);
-
-    U_opt_qp = np.full_like(U_opt, np.nan)
-    J_opt_qp = np.full_like(J_opt, np.nan)
-
-
-    # plot value function
     X = solver.X
-
-    print('Solving optimal control problem with multiple shooting')
-    with progressbar.ProgressBar(max_value=NDX) as bar:
-        for i in range(NDX):
-            x_ = X[i,:].T
-            lbg[0:nx] = x_
-            ubg[0:nx] = x_
-            sol = qp_solver(x0=w0, lbx=lbw, ubx=ubw, lbg=lbg, ubg=ubg)
-            stats = qp_solver.stats()
-            if stats['return_status'] != 'Solve_Succeeded':
-                raise Warning('OCP solver returned %s ' % (stats['return_status']))
-            J_opt_qp[i] = sol['f'].full()
-            U_opt_qp[i,:] = sol['x'].full()[nx:nx+nu].T
-            bar.update(i)
-
-    # compute normalized infinity norm of error
-    dJ = 0.0
-    nJ = 1.0
-    dU = 0.0
-    nU = 1.0
-    for i in range(NDX):
-        if ~np.any(np.isinf(J_opt[i])): 
-            dJ_ = np.abs(J_opt[i] - J_opt_qp[i])
-            if dJ_ > dJ:
-                dJ = dJ_
-            if J_opt_qp[i] > nJ:
-                nJ = J_opt_qp[i]
-        if ~np.any(np.isnan(U_opt[i,:])): 
-            dU_ = np.linalg.norm(U_opt[i] - U_opt_qp[i], np.inf)
-            if dU_ > dU:
-                dU = dU_
-            if np.linalg.norm(U_opt_qp[i], np.inf) > nU:
-                nU = np.linalg.norm(U_opt_qp[i], np.inf)
-
-    dJ = dJ/nJ
-    dU = dU/nU
-    print("inf. norm: dJ = %f, dU = %f" % (dJ, dU))
-
     fig = plt.figure()
     ax1 = fig.add_subplot(131, projection='3d')
     ax2 = fig.add_subplot(132, projection='3d')
     ax3 = fig.add_subplot(133, projection='3d')
     ax1.scatter(X[:,0], X[:,1], J_opt)
-    ax1.scatter(X[:,0], X[:,1], J_opt_qp, 'r')
     ax1.set_xlabel(r"$x_1$")
     ax1.set_ylabel(r"$x_2$")
     ax1.set_zlabel(r"$J^*(\bar{x})$")
     ax2.scatter(X[:,0], X[:,1], U_opt[:,0])
-    ax2.scatter(X[:,0], X[:,1], U_opt_qp[:,0], 'r')
     ax2.set_xlabel(r"$x_1$")
     ax2.set_ylabel(r"$x_2$")
     ax2.set_zlabel(r"$u_1^*(\bar{x})$")
     ax3.scatter(X[:,0], X[:,1], U_opt[:,1])
-    ax3.scatter(X[:,0], X[:,1], U_opt_qp[:,1], 'r')
     ax3.set_xlabel(r"$x_1$")
     ax3.set_ylabel(r"$x_2$")
     ax3.set_zlabel(r"$u_2^*(\bar{x})$")
