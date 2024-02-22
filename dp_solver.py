@@ -320,7 +320,6 @@ class DPSolver():
                         if np.any(constraints(x_,u_,x_next) < lbg):
                             continue
 
-
                     # project onto state grid
                     idx_next, x_next_p = project_onto_homogeneous_grid(x_next, x_values)
 
