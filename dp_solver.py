@@ -1,7 +1,73 @@
 import numpy as np
 import progressbar
+import multiprocessing
+import concurrent.futures
+from concurrent.futures import ThreadPoolExecutor
 
-def project_onto_homogeneous_grid(value:np.ndarray, grid:list):
+def DP_loop_fun(args): 
+    j, X, U, ubx, lbx, ubu, lbu, lbg, ubg, dynamics, constraints, stage_cost, J, NDX, NDU, NX, NU, nx, nu, x_values, u_values = args
+    x_ = np.atleast_2d(X[j,:]).T
+
+    J_new = np.inf
+    U_opt = np.nan * np.zeros((1, nu))
+
+    # simple state bound satisfaction
+    if ubx is not None:
+        if np.any(x_ > ubx):
+            return j, J_new, U_opt
+
+    if lbx is not None:
+        if np.any(x_ < lbx):
+            return j, J_new, U_opt
+
+    # loop over inputs
+    for k in range(NDU):
+        u_ = np.atleast_2d(U[k,:]).T
+
+        # simple input bound satisfaction
+        if ubu is not None:
+            if np.any(u_ > ubu):
+                continue
+
+        if lbu is not None:
+            if np.any(u_ < lbu):
+                continue
+
+        # integrate dynamics
+        x_next = dynamics(x_,u_)
+
+        # constraint satisfaction
+        if constraints is not None:
+            temp = constraints(x_,u_,x_next)
+            if np.any(constraints(x_,u_,x_next) > ubg):
+                continue
+
+            if np.any(constraints(x_,u_,x_next) < lbg):
+                continue
+
+        # project onto state grid
+        idx_next, x_next_p = project_onto_homogeneous_grid(x_next, x_values)
+
+        if idx_next is None:
+            continue
+
+        # obtain index in reshaped form
+        idx_next_rs = np.unravel_index(np.ravel_multi_index(idx_next, [NX]*nx), (NDX))
+
+        # evaluate argument of minimization
+        J_ = stage_cost(x_, u_, x_next) + J[idx_next_rs]
+
+        # print("u = [%f, %f], x = [%f, %f], x_+ = [%f, %f], x_+_p = [%f, %f], J = %f, J_opt = % f"\
+        #     % (u_[0], u_[1], x_[0], x_[1], np.squeeze(x_next[0]), np.squeeze(x_next[1]),\
+        #     np.squeeze(x_next_p[0]), np.squeeze(x_next_p[1]), J_, J_new[j]))
+
+        if J_ < J_new:
+            J_new = J_
+            U_opt = u_.T
+
+    return j, J_new, U_opt
+
+def project_onto_homogeneous_grid(value, grid):
     '''
     Project a value to the index of its "closest" 
     value in a homogeneous grid
@@ -281,65 +347,29 @@ class DPSolver():
         else:
             ubu = self.ubu
 
+        # loop over states
+
+        # prepare args
+        args = []
+        for j in range(NDX):
+            args.append((j, X, U, ubx, lbx, ubu, lbu, lbg, ubg, dynamics, constraints, stage_cost, J, NDX, NDU, NX, NU, nx, nu, x_values, u_values))
+
         with progressbar.ProgressBar(max_value=NDX) as bar:
-            # loop over states
             for j in range(NDX):
-                x_ = np.atleast_2d(X[j,:]).T
-
-                # simple state bound satisfaction
-                if ubx is not None:
-                    if np.any(x_ > ubx):
-                        continue
-
-                if lbx is not None:
-                    if np.any(x_ < lbx):
-                        continue
-
-                # loop over inputs
-                for k in range(NDU):
-                    u_ = np.atleast_2d(U[k,:]).T
-
-                    # simple input bound satisfaction
-                    if ubu is not None:
-                        if np.any(u_ > ubu):
-                            continue
-
-                    if lbu is not None:
-                        if np.any(u_ < lbu):
-                            continue
-
-                    # integrate dynamics
-                    x_next = dynamics(x_,u_)
-
-                    # constraint satisfaction
-                    if constraints is not None:
-                        temp = constraints(x_,u_,x_next)
-                        if np.any(constraints(x_,u_,x_next) > ubg):
-                            continue
-
-                        if np.any(constraints(x_,u_,x_next) < lbg):
-                            continue
-
-                    # project onto state grid
-                    idx_next, x_next_p = project_onto_homogeneous_grid(x_next, x_values)
-
-                    if idx_next is None:
-                        continue
-
-                    # obtain index in reshaped form
-                    idx_next_rs = np.unravel_index(np.ravel_multi_index(idx_next, [NX]*nx), (NDX))
-
-                    # evaluate argument of minimization
-                    J_ = stage_cost(x_, u_, x_next) + J[idx_next_rs]
-
-                    # print("u = [%f, %f], x = [%f, %f], x_+ = [%f, %f], x_+_p = [%f, %f], J = %f, J_opt = % f"\
-                    #     % (u_[0], u_[1], x_[0], x_[1], np.squeeze(x_next[0]), np.squeeze(x_next[1]),\
-                    #     np.squeeze(x_next_p[0]), np.squeeze(x_next_p[1]), J_, J_new[j]))
-
-                    if J_ < J_new[j]:
-                        J_new[j] = J_
-                        U_opt[j,:] = u_.T
+                _ , J_new[j], U_opt[j,:] = DP_loop_fun(args[j]) 
                 bar.update(j)
+
+        # executor = ThreadPoolExecutor(max_workers=10)
+        # for result in executor.map(DP_loop_fun, args):
+        #     print(result[0])
+        #     J_new[result[0]] = result[1]
+        #     U_opt[result[0],:] = result[2]
+                # bar.update(j)
+
+        # with multiprocessing.Pool() as pool:
+        #     for result in pool.map(DP_loop_fun, args):
+        #         J_new[result[0]] = result[1]
+        #         U_opt[result[0],:] = result[2]
 
         return J_new, U_opt
     

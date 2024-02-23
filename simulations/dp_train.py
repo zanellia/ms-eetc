@@ -15,6 +15,7 @@ from ocp import *
 from track import *
 
 SAVE2JSON = True
+JSON_NAME = 'temp'
 
 if __name__ == '__main__':
     
@@ -37,7 +38,7 @@ if __name__ == '__main__':
     nu = 2
 
     # number of points in the discretized state and input spaces
-    NX = 100
+    NX = 10
     NU = 10
 
     train = Train(config={'id':'NL_intercity_VIRM6'}, pathJSON='../trains')
@@ -87,6 +88,7 @@ if __name__ == '__main__':
     forceMinPn_ = 0
     if withRgBrake:
         forceMinPn_ = forceMinPn
+
 
     powerMax = train.powerMax/totalMass if train.powerMax is not None else None
     powerMin = train.powerMin/totalMass if train.powerMin is not None else None
@@ -197,7 +199,6 @@ if __name__ == '__main__':
         ubg.append(ubg_)
         constraints.append(g_)
 
-        # coupling constraints
         def dyn_(x,u):
             x_next = trainIntegrator.solve(time=x[0], velocitySquared=x[1],\
             ds=steps[i], traction=u[0], pnBrake=u[1], gradient=grad,\
@@ -279,33 +280,40 @@ if __name__ == '__main__':
     
     J_opt[:,:,-1] = J_opt_
 
+    fig = plt.figure()
+    ax1 = fig.add_subplot(131, projection='3d')
+    ax2 = fig.add_subplot(132, projection='3d')
+    ax3 = fig.add_subplot(133, projection='3d')
+    ax1.set_xlabel(r"$t$")
+    ax1.set_ylabel(r"$v^2$")
+    ax1.set_zlabel(r"$J^*(\bar{x})$")
+    ax2.set_xlabel(r"$t$")
+    ax2.set_ylabel(r"$v^2$")
+    ax2.set_zlabel(r"$F_{\rm{el}}^*(\bar{x})$")
+    ax3.set_xlabel(r"$t$")
+    ax3.set_ylabel(r"$v^2$")
+    ax3.set_zlabel(r"$F_{\rm{pb}}^*(\bar{x})$")
+
+    X = solver.X
+    plt.show(block=False)
     # loop over time in reversed order
     for i in range(N-1,-1,-1):
         print('stage = {}'.format(i))
         J_opt[:,:,i], U_opt[:,:,i] = solver.DPOperator(J_opt[:,:,i+1],i)
 
-    X = solver.X
+        ax1.cla()
+        ax2.cla()
+        ax3.cla()
+        ax1.scatter(X[:,0], X[:,1], J_opt[:,:,i])
+        ax2.scatter(X[:,0], X[:,1], U_opt[:,0,i])
+        ax3.scatter(X[:,0], X[:,1], U_opt[:,1,i])
+        fig.canvas.draw()
+        fig.canvas.flush_events()
+        # plt.show()
 
     if SAVE2JSON:
-        np.save('X.npy', X)
-        np.save('J_opt.npy', J_opt)
-        np.save('U_opt.npy', U_opt)
+        np.save(JSON_NAME + '_X.npy', X)
+        np.save(JSON_NAME + '_J_opt.npy', J_opt)
+        np.save(JSON_NAME + '_U_opt.npy', U_opt)
 
-    fig = plt.figure()
-    ax1 = fig.add_subplot(131, projection='3d')
-    ax2 = fig.add_subplot(132, projection='3d')
-    ax3 = fig.add_subplot(133, projection='3d')
-    ax1.scatter(X[:,0], X[:,1], J_opt[:,:,0])
-    ax1.set_xlabel(r"$t$")
-    ax1.set_ylabel(r"$v^2$")
-    ax1.set_zlabel(r"$J^*(\bar{x})$")
-    ax2.scatter(X[:,0], X[:,1], U_opt[:,0,0])
-    ax2.set_xlabel(r"$t$")
-    ax2.set_ylabel(r"$v^2$")
-    ax2.set_zlabel(r"$F_{\rm{el}}^*(\bar{x})$")
-    ax3.scatter(X[:,0], X[:,1], U_opt[:,1,0])
-    ax3.set_xlabel(r"$t$")
-    ax3.set_ylabel(r"$v^2$")
-    ax3.set_zlabel(r"$F_{\rm{pb}}^*(\bar{x})$")
-    plt.show()
 
