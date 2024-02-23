@@ -35,11 +35,11 @@ if __name__ == '__main__':
     nx = 2
 
     # number of inputs
-    nu = 2
+    nu = 1
 
     # number of points in the discretized state and input spaces
-    NX = 10
-    NU = 10
+    NX = 20
+    NU = 20
 
     train = Train(config={'id':'NL_intercity_VIRM6'}, pathJSON='../trains')
     train.forceMinPn = 0
@@ -100,7 +100,11 @@ if __name__ == '__main__':
 
     x_bounds = ((initialTime, terminalTime),\
         (0.0, (velocityMax)**2))
-    u_bounds = ((forceMin_, forceMax), (forceMinPn_, 0.0))
+
+    if withPnBrake:
+        u_bounds = ((forceMin_, forceMax), (forceMinPn_, 0.0))
+    else:
+        u_bounds = [[forceMin_, forceMax]]
 
     x_values = []
     x_values.append(np.linspace(x_bounds[0][0], x_bounds[0][1], NX))
@@ -153,13 +157,31 @@ if __name__ == '__main__':
     params = []
 
     # dynamics
-    def dyn_(x,u,p):
-        x_next = trainIntegrator.solve(time=x[0], velocitySquared=x[1],\
-        ds=steps[i], traction=u[0], pnBrake=u[1], gradient=p[0],\
-        curvature=p[1])
-        return np.array([x_next['time'].full(), x_next['velSquared'].full()]) 
+    if withPnBrake:
+        def dyn_(x,u,p):
+            x_next = trainIntegrator.solve(time=x[0], velocitySquared=x[1],\
+            ds=steps[i], traction=u[0], pnBrake=u[1], gradient=p[0],\
+            curvature=p[1])
+            return np.array([x_next['time'].full(), x_next['velSquared'].full()]) 
+    else:
+        def dyn_(x,u,p):
+            x_next = trainIntegrator.solve(time=x[0], velocitySquared=x[1],\
+            ds=steps[i], traction=u[0], pnBrake=0.0, gradient=p[0],\
+            curvature=p[1])
+            return np.array([x_next['time'].full(), x_next['velSquared'].full()]) 
 
     dynamics = dyn_
+
+    # power constraints
+    if powerMax is not None or powerMin is not None:
+
+        def g_p(x, u, xnext): 
+            return np.vstack((u[0]*ca.sqrt(x[1]), u[0]*ca.sqrt(xnext[1])))
+
+    else:
+
+        def g_p(x, u, xnext): 
+            return [] 
 
     # acceleration constraints
     if withPnBrake:
@@ -203,39 +225,35 @@ if __name__ == '__main__':
     for i in range(numIntervals):
 
         # input bounds
-        lbu.append(np.vstack((forceMin_, forceMinPn_)))
-        ubu.append(np.vstack((forceMax, 0.0)))
-
-        # power constraints
-        if powerMax is not None or powerMin is not None:
-
-            upperBound = powerMax if powerMax is not None else forceMax*velocityMax
-            lowerBound = 0 if not withRgBrake else powerMin if powerMin is not None else forceMin*velocityMax
-
-            def g_p(x, u, xnext): 
-                return np.vstack((u[0]*ca.sqrt(x[1]), u[0]*ca.sqrt(xnext[1])))
-
-            ubg_ = abs(upperBound)*np.ones((2,1))
-            lbg_ = -abs(lowerBound)*np.ones((2,1))
+        if withPnBrake:
+            lbu.append(np.vstack((forceMin_, forceMinPn_)))
+            ubu.append(np.vstack((forceMax, 0.0)))
         else:
-            ubg_ = np.zeros((0,1))
-            lbg_ = np.zeros((0,1))
+            lbu.append((forceMin_))
+            ubu.append((forceMax))
 
-            def g_p(x, u, xnext): 
-                return [] 
 
         # gradient and curvature of current index
         grad = points.iloc[i]['Gradient [permil]']/1e3
         curv = points.iloc[i]['Curvature [1/m]']
 
         params.append([grad,curv])
+
+        if powerMax is not None or powerMin is not None:
+
+            upperBound = powerMax if powerMax is not None else forceMax*velocityMax
+            lowerBound = 0 if not withRgBrake else powerMin if powerMin is not None else forceMin*velocityMax
+            ubg_ = abs(upperBound)*np.ones((2,1))
+            lbg_ = -abs(lowerBound)*np.ones((2,1))
+        else:
+            ubg_ = np.zeros((0,1))
+            lbg_ = np.zeros((0,1))
         
         lbg_ = np.vstack((lbg_,accMin))
         ubg_ = np.vstack((ubg_,accMax))
 
         lbg.append(lbg_)
         ubg.append(ubg_)
-
 
         # objective
         # scaling of objective function (fixes convergence issues when using powerLosses)
@@ -287,18 +305,26 @@ if __name__ == '__main__':
     J_opt[:,:,-1] = J_opt_
 
     fig = plt.figure()
-    ax1 = fig.add_subplot(131, projection='3d')
-    ax2 = fig.add_subplot(132, projection='3d')
-    ax3 = fig.add_subplot(133, projection='3d')
+
+    if withPnBrake:
+        ax1 = fig.add_subplot(131, projection='3d')
+        ax2 = fig.add_subplot(132, projection='3d')
+        ax3 = fig.add_subplot(133, projection='3d')
+    else:
+        ax1 = fig.add_subplot(121, projection='3d')
+        ax2 = fig.add_subplot(122, projection='3d')
+
     ax1.set_xlabel(r"$t$")
     ax1.set_ylabel(r"$v^2$")
     ax1.set_zlabel(r"$J^*(\bar{x})$")
     ax2.set_xlabel(r"$t$")
     ax2.set_ylabel(r"$v^2$")
     ax2.set_zlabel(r"$F_{\rm{el}}^*(\bar{x})$")
-    ax3.set_xlabel(r"$t$")
-    ax3.set_ylabel(r"$v^2$")
-    ax3.set_zlabel(r"$F_{\rm{pb}}^*(\bar{x})$")
+
+    if withPnBrake:
+        ax3.set_xlabel(r"$t$")
+        ax3.set_ylabel(r"$v^2$")
+        ax3.set_zlabel(r"$F_{\rm{pb}}^*(\bar{x})$")
 
     X = solver.X
     plt.show(block=False)
@@ -309,10 +335,16 @@ if __name__ == '__main__':
 
         ax1.cla()
         ax2.cla()
-        ax3.cla()
+
+        if withPnBrake:
+            ax3.cla()
+
         ax1.scatter(X[:,0], X[:,1], J_opt[:,:,i])
         ax2.scatter(X[:,0], X[:,1], U_opt[:,0,i])
-        ax3.scatter(X[:,0], X[:,1], U_opt[:,1,i])
+
+        if withPnBrake:
+            ax3.scatter(X[:,0], X[:,1], U_opt[:,1,i])
+
         fig.canvas.draw()
         fig.canvas.flush_events()
         # plt.show()

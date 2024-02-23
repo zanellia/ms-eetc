@@ -18,60 +18,59 @@ def DP_loop_fun(args):
     U_opt = np.nan * np.zeros((1, nu))
     # print(j)
 
-    for i in range(100):
-        # simple state bound satisfaction
-        if ubx is not None:
-            if np.any(x_ > ubx):
-                return j, J_new, U_opt
+    # simple state bound satisfaction
+    if ubx is not None:
+        if np.any(x_ > ubx):
+            return j, J_new, U_opt
 
-        if lbx is not None:
-            if np.any(x_ < lbx):
-                return j, J_new, U_opt
+    if lbx is not None:
+        if np.any(x_ < lbx):
+            return j, J_new, U_opt
 
-        # loop over inputs
-        for k in range(NDU):
-            u_ = np.atleast_2d(U[k,:]).T
+    # loop over inputs
+    for k in range(NDU):
+        u_ = np.atleast_2d(U[k,:]).T
 
-            # simple input bound satisfaction
-            if ubu is not None:
-                if np.any(u_ > ubu):
-                    continue
-
-            if lbu is not None:
-                if np.any(u_ < lbu):
-                    continue
-
-            # integrate dynamics
-            x_next = dynamics(x_,u_, params)
-
-            # project onto state grid
-            idx_next, x_next_p = project_onto_homogeneous_grid(x_next, x_values)
-
-            # constraint satisfaction
-            con_ = constraints(x_,u_,x_next, params)
-            if constraints is not None:
-                if np.any(con_ > ubg):
-                    continue
-
-                if np.any(con_ < lbg):
-                    continue
-
-            if idx_next is None:
+        # simple input bound satisfaction
+        if ubu is not None:
+            if np.any(u_ > ubu):
                 continue
 
-            # obtain index in reshaped form
-            idx_next_rs = np.unravel_index(np.ravel_multi_index(idx_next, [NX]*nx), (NDX))
+        if lbu is not None:
+            if np.any(u_ < lbu):
+                continue
 
-            # evaluate argument of minimization
-            J_ = stage_cost(x_, u_, x_next, params) + J[idx_next_rs]
+        # integrate dynamics
+        x_next = dynamics(x_,u_, params)
 
-            # print("u = [%f, %f], x = [%f, %f], x_+ = [%f, %f], x_+_p = [%f, %f], J = %f, J_opt = % f"\
-            #     % (u_[0], u_[1], x_[0], x_[1], np.squeeze(x_next[0]), np.squeeze(x_next[1]),\
-            #     np.squeeze(x_next_p[0]), np.squeeze(x_next_p[1]), J_, J_new[j]))
+        # project onto state grid
+        idx_next, x_next_p = project_onto_homogeneous_grid(x_next, x_values)
 
-            if J_ < J_new:
-                J_new = J_
-                U_opt = u_.T
+        # constraint satisfaction
+        con_ = constraints(x_,u_,x_next, params)
+        if constraints is not None:
+            if np.any(con_ > ubg):
+                continue
+
+            if np.any(con_ < lbg):
+                continue
+
+        if idx_next is None:
+            continue
+
+        # obtain index in reshaped form
+        idx_next_rs = np.unravel_index(np.ravel_multi_index(idx_next, [NX]*nx), (NDX))
+
+        # evaluate argument of minimization
+        J_ = stage_cost(x_, u_, x_next, params) + J[idx_next_rs]
+
+        # print("u = [%f, %f], x = [%f, %f], x_+ = [%f, %f], x_+_p = [%f, %f], J = %f, J_opt = % f"\
+        #     % (u_[0], u_[1], x_[0], x_[1], np.squeeze(x_next[0]), np.squeeze(x_next[1]),\
+        #     np.squeeze(x_next_p[0]), np.squeeze(x_next_p[1]), J_, J_new[j]))
+
+        if J_ < J_new:
+            J_new = J_
+            U_opt = u_.T
 
     return j, J_new, U_opt
 
@@ -141,17 +140,17 @@ class DPSolver():
         NU  :   int
             number of discretization points for the input space (per dimension)
 
-        stage_cost : function or list of functions
-            stage cost function R^{nx} x R^{nu} -> R - list of functions for time-varying formulations
+        stage_cost : function
+            stage cost function R^{nx} x R^{nu} x R^{np} -> R
             
         dynamics : function
-            dynamics function R^{nx} x R^{nu} -> R^{nx} - list of functions for time-varying formulations
+            dynamics function R^{nx} x R^{nu} x R^{np} -> R^{nx}
 
-        terminal_cost : function or list of functions
+        terminal_cost : function
             terminal_cost function R^{nx} -> R
 
-        constraints : function or list of functions
-            constraints function R^{nx} x R^{nu} -> R^{ng} - list of functions for time-varying formulations
+        constraints : function
+            constraints function R^{nx} x R^{nu} x R^{np} -> R^{ng}
 
         lbg : np.ndarray or list of np.ndarrays
             lower bounds on constraints
@@ -288,34 +287,9 @@ class DPSolver():
         J_new = np.inf * np.ones((NDX, 1))
         U_opt = np.nan * np.zeros((NDX, nu))
 
-        # if stage_idx is not None:
-        #     # check that any of dynamics, stage_cost, constraints is stage-varying
-        #     if (not isinstance(self.dynamics, list)) and (not isinstance(self.constraints, list)) and (not isinstance(self.stage_cost, list)):
-        #         raise Exception('stage_idx provided, but problem formulation is not stage-varying')
-
-        # if isinstance(self.dynamics, list):
-        #     if stage_idx is None:
-        #         raise Exception('Dynamics are stage-varying, but no stage index was provided.')
-        #     dynamics = self.dynamics[stage_idx]
-        # else:
-        #     dynamics = self.dynamics
-
         dynamics = self.dynamics
 
-        # if isinstance(self.stage_cost, list):
-        #     if stage_idx is None:
-        #         raise Exception('Stage cost is stage-varying, but no stage index was provided.')
-        #     stage_cost = self.stage_cost[stage_idx]
-        # else:
-        #     stage_cost = self.stage_cost
         stage_cost = self.stage_cost
-
-        # if isinstance(self.constraints, list):
-        #     if stage_idx is None:
-        #         raise Exception('Constraints are stage-varying, but no stage index was provided.')
-        #     constraints = self.constraints[stage_idx]
-        # else:
-        #     constraints = self.constraints
 
         constraints = self.constraints
 
@@ -388,7 +362,7 @@ class DPSolver():
 
 
         start_time = time.time()
-        with multiprocessing.Pool(processes=20) as pool:
+        with multiprocessing.Pool(processes=14) as pool:
             for result in pool.map(DP_loop_fun, args):
                 J_new[result[0]] = result[1]
                 U_opt[result[0],:] = result[2]
