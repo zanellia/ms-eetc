@@ -150,6 +150,55 @@ if __name__ == '__main__':
     dynamics = []
     stage_cost = [] 
     constraints = []
+    params = []
+
+    # dynamics
+    def dyn_(x,u,p):
+        x_next = trainIntegrator.solve(time=x[0], velocitySquared=x[1],\
+        ds=steps[i], traction=u[0], pnBrake=u[1], gradient=p[0],\
+        curvature=p[1])
+        return np.array([x_next['time'].full(), x_next['velSquared'].full()]) 
+
+    dynamics = dyn_
+
+    # acceleration constraints
+    if withPnBrake:
+        def g_(x, u, x_next, p): 
+            return ca.vertcat(g_p(x,u,x_next),\
+            trainModel.accelerationFun(ca.vertcat(x[0], x[1]),\
+            u, p[0], p[1]))
+    else:
+        def g_(x, u, x_next, p): 
+            return ca.vertcat(g_p(x,u,x_next),\
+            trainModel.accelerationFun(ca.vertcat(x[0], x[1]),\
+            u[0], p[0], p[1]))
+
+    constraints = g_
+
+    if opts.energyOptimal:
+
+        if not opts.integrateLosses:
+
+            # approximating interval with mid-point rule
+            def stage_cost_(x, u, x_next, p):
+                vMid = (ca.sqrt(x[1]) + ca.sqrt(x_next[1]))/2
+                return (steps[i]*(u[0] + powerLossesND(u[0], vMid)/vMid))/\
+                    scalingFactorObjective
+
+            # stage_cost.append(stage_cost_)
+            stage_cost = stage_cost_
+
+        else:
+
+            raise Exception('Not implemented.')
+
+        # TODO(andrea): this would require a state augmentation...
+
+        # if i > 0:  # small penalty on deviations to remove unnecessary spikes
+        #     obj += 1e-3*(Fel[i] - Fel[i-1])**2
+
+        Warning('Input rate penalty not implemented!')
+
 
     for i in range(numIntervals):
 
@@ -179,33 +228,14 @@ if __name__ == '__main__':
         grad = points.iloc[i]['Gradient [permil]']/1e3
         curv = points.iloc[i]['Curvature [1/m]']
 
-        # TODO(andrea): handle variable number of inputs in a cleaner way
-        # acceleration constraints
-        if withPnBrake:
-            def g_(x, u, x_next): 
-                return ca.vertcat(g_p(x,u,x_next),\
-                trainModel.accelerationFun(ca.vertcat(x[0], x[1]),\
-                u, grad, curv))
-        else:
-            def g_(x, u, x_next): 
-                return ca.vertcat(g_p(x,u,x_next),\
-                trainModel.accelerationFun(ca.vertcat(x[0], x[1]),\
-                u[0], grad, curv))
+        params.append([grad,curv])
         
         lbg_ = np.vstack((lbg_,accMin))
         ubg_ = np.vstack((ubg_,accMax))
 
         lbg.append(lbg_)
         ubg.append(ubg_)
-        constraints.append(g_)
 
-        def dyn_(x,u):
-            x_next = trainIntegrator.solve(time=x[0], velocitySquared=x[1],\
-            ds=steps[i], traction=u[0], pnBrake=u[1], gradient=grad,\
-            curvature=curv)
-            return np.array([x_next['time'].full(), x_next['velSquared'].full()]) 
-
-        dynamics.append(dyn_)
 
         # objective
         # scaling of objective function (fixes convergence issues when using powerLosses)
@@ -216,34 +246,10 @@ if __name__ == '__main__':
         else:
 
             scalingFactorObjective = track.length/train.velocityMax  # divide by fastest possible
-        if opts.energyOptimal:
-
-            if not opts.integrateLosses:
-
-                # approximating interval with mid-point rule
-                def stage_cost_(x, u, x_next):
-                    vMid = (ca.sqrt(x[1]) + ca.sqrt(x_next[1]))/2
-                    return (steps[i]*(u[0] + powerLossesND(u[0], vMid)/vMid))/\
-                        scalingFactorObjective
-
-                stage_cost.append(stage_cost_)
-
-            else:
-
-                raise Exception('Not implemented.')
-
-            # TODO(andrea): this would require a state augmentation...
-
-            # if i > 0:  # small penalty on deviations to remove unnecessary spikes
-            #     obj += 1e-3*(Fel[i] - Fel[i-1])**2
-
-            Warning('Input rate penalty not implemented!')
-
 
         # state constraints
         speedLimit = points.iloc[i]['Speed limit [m/s]']
         speedLimit = min(speedLimit, velocityMax)
-        print(speedLimit)
 
         speedLimit = min(speedLimit, points.iloc[i-1]['Speed limit [m/s]'])  # do not accelerate before speed limit increase
 
@@ -258,7 +264,7 @@ if __name__ == '__main__':
     # create DP solver
     solver = DPSolver(nx, nu, NX, NU, stage_cost, dynamics,\
         x_values=x_values, u_bounds=u_bounds, constraints=constraints, lbg=lbg, ubg=ubg,\
-        lbx=lbx, ubx=ubx, lbu=lbu, ubu=ubu)
+        lbx=lbx, ubx=ubx, lbu=lbu, ubu=ubu, params=params)
     
     NDX = solver.X.shape[0]
     # optimal value function

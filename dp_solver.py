@@ -2,68 +2,76 @@ import numpy as np
 import progressbar
 import multiprocessing
 import concurrent.futures
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+import os
+import threading
+import time
 
 def DP_loop_fun(args): 
-    j, X, U, ubx, lbx, ubu, lbu, lbg, ubg, dynamics, constraints, stage_cost, J, NDX, NDU, NX, NU, nx, nu, x_values, u_values = args
+    j, X, U, ubx, lbx, ubu, lbu, lbg, ubg, dynamics, constraints, stage_cost, J, NDX, NDU, NX, NU, nx, nu, x_values, u_values, params = args
     x_ = np.atleast_2d(X[j,:]).T
 
+    # my_pid = os.getpid()
+    # print("Executing our Task on Process {}".format(my_pid))
+    # print("Executing on Thread {}".format(threading.get_ident()))
     J_new = np.inf
     U_opt = np.nan * np.zeros((1, nu))
+    # print(j)
 
-    # simple state bound satisfaction
-    if ubx is not None:
-        if np.any(x_ > ubx):
-            return j, J_new, U_opt
+    for i in range(100):
+        # simple state bound satisfaction
+        if ubx is not None:
+            if np.any(x_ > ubx):
+                return j, J_new, U_opt
 
-    if lbx is not None:
-        if np.any(x_ < lbx):
-            return j, J_new, U_opt
+        if lbx is not None:
+            if np.any(x_ < lbx):
+                return j, J_new, U_opt
 
-    # loop over inputs
-    for k in range(NDU):
-        u_ = np.atleast_2d(U[k,:]).T
+        # loop over inputs
+        for k in range(NDU):
+            u_ = np.atleast_2d(U[k,:]).T
 
-        # simple input bound satisfaction
-        if ubu is not None:
-            if np.any(u_ > ubu):
+            # simple input bound satisfaction
+            if ubu is not None:
+                if np.any(u_ > ubu):
+                    continue
+
+            if lbu is not None:
+                if np.any(u_ < lbu):
+                    continue
+
+            # integrate dynamics
+            x_next = dynamics(x_,u_, params)
+
+            # project onto state grid
+            idx_next, x_next_p = project_onto_homogeneous_grid(x_next, x_values)
+
+            # constraint satisfaction
+            con_ = constraints(x_,u_,x_next, params)
+            if constraints is not None:
+                if np.any(con_ > ubg):
+                    continue
+
+                if np.any(con_ < lbg):
+                    continue
+
+            if idx_next is None:
                 continue
 
-        if lbu is not None:
-            if np.any(u_ < lbu):
-                continue
+            # obtain index in reshaped form
+            idx_next_rs = np.unravel_index(np.ravel_multi_index(idx_next, [NX]*nx), (NDX))
 
-        # integrate dynamics
-        x_next = dynamics(x_,u_)
+            # evaluate argument of minimization
+            J_ = stage_cost(x_, u_, x_next, params) + J[idx_next_rs]
 
-        # constraint satisfaction
-        if constraints is not None:
-            temp = constraints(x_,u_,x_next)
-            if np.any(constraints(x_,u_,x_next) > ubg):
-                continue
+            # print("u = [%f, %f], x = [%f, %f], x_+ = [%f, %f], x_+_p = [%f, %f], J = %f, J_opt = % f"\
+            #     % (u_[0], u_[1], x_[0], x_[1], np.squeeze(x_next[0]), np.squeeze(x_next[1]),\
+            #     np.squeeze(x_next_p[0]), np.squeeze(x_next_p[1]), J_, J_new[j]))
 
-            if np.any(constraints(x_,u_,x_next) < lbg):
-                continue
-
-        # project onto state grid
-        idx_next, x_next_p = project_onto_homogeneous_grid(x_next, x_values)
-
-        if idx_next is None:
-            continue
-
-        # obtain index in reshaped form
-        idx_next_rs = np.unravel_index(np.ravel_multi_index(idx_next, [NX]*nx), (NDX))
-
-        # evaluate argument of minimization
-        J_ = stage_cost(x_, u_, x_next) + J[idx_next_rs]
-
-        # print("u = [%f, %f], x = [%f, %f], x_+ = [%f, %f], x_+_p = [%f, %f], J = %f, J_opt = % f"\
-        #     % (u_[0], u_[1], x_[0], x_[1], np.squeeze(x_next[0]), np.squeeze(x_next[1]),\
-        #     np.squeeze(x_next_p[0]), np.squeeze(x_next_p[1]), J_, J_new[j]))
-
-        if J_ < J_new:
-            J_new = J_
-            U_opt = u_.T
+            if J_ < J_new:
+                J_new = J_
+                U_opt = u_.T
 
     return j, J_new, U_opt
 
@@ -114,9 +122,9 @@ def project_onto_homogeneous_grid(value, grid):
     return indexes, value_p
 
 class DPSolver():
-    def __init__(self, nx, nu, NX, NU, stage_cost,\
-            dynamics, terminal_cost=None, constraints=None, lbg=None, ubg=None, lbx=None, ubx=None, lbu=None, ubu=None,\
-            x_bounds=None, u_bounds=None, x_values=None, u_values=None):
+    def __init__(self, nx, nu, NX, NU, stage_cost, dynamics, terminal_cost=None,\
+            constraints=None, lbg=None, ubg=None, lbx=None, ubx=None, lbu=None, ubu=None,\
+            x_bounds=None, u_bounds=None, x_values=None, u_values=None, params=None):
         
         '''
         Parameters
@@ -195,6 +203,7 @@ class DPSolver():
         self.terminal_cost = terminal_cost
         self.dynamics = dynamics
         self.constraints = constraints
+        self.params = params
         self.lbg = lbg
         self.ubg = ubg
         self.lbx = lbx
@@ -279,31 +288,36 @@ class DPSolver():
         J_new = np.inf * np.ones((NDX, 1))
         U_opt = np.nan * np.zeros((NDX, nu))
 
-        if stage_idx is not None:
-            # check that any of dynamics, stage_cost, constraints is stage-varying
-            if (not isinstance(self.dynamics, list)) and (not isinstance(self.constraints, list)) and (not isinstance(self.stage_cost, list)):
-                raise Exception('stage_idx provided, but problem formulation is not stage-varying')
+        # if stage_idx is not None:
+        #     # check that any of dynamics, stage_cost, constraints is stage-varying
+        #     if (not isinstance(self.dynamics, list)) and (not isinstance(self.constraints, list)) and (not isinstance(self.stage_cost, list)):
+        #         raise Exception('stage_idx provided, but problem formulation is not stage-varying')
 
-        if isinstance(self.dynamics, list):
-            if stage_idx is None:
-                raise Exception('Dynamics are stage-varying, but no stage index was provided.')
-            dynamics = self.dynamics[stage_idx]
-        else:
-            dynamics = self.dynamics
+        # if isinstance(self.dynamics, list):
+        #     if stage_idx is None:
+        #         raise Exception('Dynamics are stage-varying, but no stage index was provided.')
+        #     dynamics = self.dynamics[stage_idx]
+        # else:
+        #     dynamics = self.dynamics
 
-        if isinstance(self.stage_cost, list):
-            if stage_idx is None:
-                raise Exception('Stage cost is stage-varying, but no stage index was provided.')
-            stage_cost = self.stage_cost[stage_idx]
-        else:
-            stage_cost = self.stage_cost
+        dynamics = self.dynamics
 
-        if isinstance(self.constraints, list):
-            if stage_idx is None:
-                raise Exception('Constraints are stage-varying, but no stage index was provided.')
-            constraints = self.constraints[stage_idx]
-        else:
-            constraints = self.constraints
+        # if isinstance(self.stage_cost, list):
+        #     if stage_idx is None:
+        #         raise Exception('Stage cost is stage-varying, but no stage index was provided.')
+        #     stage_cost = self.stage_cost[stage_idx]
+        # else:
+        #     stage_cost = self.stage_cost
+        stage_cost = self.stage_cost
+
+        # if isinstance(self.constraints, list):
+        #     if stage_idx is None:
+        #         raise Exception('Constraints are stage-varying, but no stage index was provided.')
+        #     constraints = self.constraints[stage_idx]
+        # else:
+        #     constraints = self.constraints
+
+        constraints = self.constraints
 
         if isinstance(self.lbg, list):
             if stage_idx is None:
@@ -347,29 +361,39 @@ class DPSolver():
         else:
             ubu = self.ubu
 
+        if isinstance(self.params, list):
+            if stage_idx is None:
+                raise Exception('params are stage-varying, but no stage index was provided.')
+            params = self.params[stage_idx]
+        else:
+            params = self.params
+
         # loop over states
 
         # prepare args
         args = []
         for j in range(NDX):
-            args.append((j, X, U, ubx, lbx, ubu, lbu, lbg, ubg, dynamics, constraints, stage_cost, J, NDX, NDU, NX, NU, nx, nu, x_values, u_values))
+            args.append((j, X, U, ubx, lbx, ubu, lbu, lbg, ubg, dynamics, constraints, stage_cost, J, NDX, NDU, NX, NU, nx, nu, x_values, u_values, params))
 
-        with progressbar.ProgressBar(max_value=NDX) as bar:
-            for j in range(NDX):
-                _ , J_new[j], U_opt[j,:] = DP_loop_fun(args[j]) 
-                bar.update(j)
+        # with progressbar.ProgressBar(max_value=NDX) as bar:
+        #     for j in range(NDX):
+        #         _ , J_new[j], U_opt[j,:] = DP_loop_fun(args[j]) 
+        #         bar.update(j)
 
-        # executor = ThreadPoolExecutor(max_workers=10)
+        # executor = ProcessPoolExecutor(max_workers=10)
         # for result in executor.map(DP_loop_fun, args):
-        #     print(result[0])
+        #     # print(result[0])
         #     J_new[result[0]] = result[1]
         #     U_opt[result[0],:] = result[2]
-                # bar.update(j)
 
-        # with multiprocessing.Pool() as pool:
-        #     for result in pool.map(DP_loop_fun, args):
-        #         J_new[result[0]] = result[1]
-        #         U_opt[result[0],:] = result[2]
+
+        start_time = time.time()
+        with multiprocessing.Pool(processes=20) as pool:
+            for result in pool.map(DP_loop_fun, args):
+                J_new[result[0]] = result[1]
+                U_opt[result[0],:] = result[2]
+        exec_time = time.time() - start_time
+        print('DP iteration executed in %f s' % (exec_time))
 
         return J_new, U_opt
     
